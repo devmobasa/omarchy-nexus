@@ -21,6 +21,8 @@ var DEFAULTS = {
   showBattery: true,
   showSensors: true,
   showVisualizer: true,
+  showScreenTime: true,
+  showNextEvent: true,
   gmAnimations: true,
   gmBlur: true,
   gmShadows: true,
@@ -33,7 +35,7 @@ var DEFAULTS = {
 // The booleans the Settings page owns; only these round-trip through the
 // state file, and only literal true/false values are honored.
 var STATE_FIELDS = ["showMedia", "showMetrics", "showNetwork", "showFetch",
-  "showSensors", "showVisualizer",
+  "showSensors", "showVisualizer", "showScreenTime", "showNextEvent",
   "showCpu", "showMemory", "showStorage", "showBattery",
   "gmAnimations", "gmBlur", "gmShadows", "gmGaps", "gmRounding", "gmTearing"]
 

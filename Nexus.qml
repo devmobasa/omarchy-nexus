@@ -18,6 +18,9 @@ import "model/NexusGameModeModel.js" as NexusGameModeModel
 import "model/NexusKeybindsModel.js" as NexusKeybindsModel
 import "model/NexusSensorsModel.js" as NexusSensorsModel
 import "model/NexusCavaModel.js" as NexusCavaModel
+import "model/NexusSuiteModel.js" as NexusSuiteModel
+import "model/NexusAgendaModel.js" as NexusAgendaModel
+import "model/NexusPomodoroModel.js" as NexusPomodoroModel
 
 Item {
   id: root
@@ -147,6 +150,7 @@ Item {
     root.gameModePending = false
     root.gameModeError = ""
     root.settingsError = ""
+    saveNotes()
     closingFromHost = false
   }
 
@@ -218,7 +222,10 @@ Item {
     running: root.opened
     interval: 1000
     repeat: true
-    onTriggered: root.now = new Date()
+    onTriggered: {
+      root.now = new Date()
+      root.resolvePomodoroExpiry()
+    }
   }
 
   // ---- first-party reactive services ---------------------------------------
@@ -421,6 +428,169 @@ Item {
     }
   }
 
+  // ---- suite integrations --------------------------------------------------
+  // Read-only views over the state files sibling plugins maintain. Every
+  // reader is opened-gated and watch-driven; absent files just hide their
+  // card. No subprocesses anywhere in this section.
+
+  // Screen time (community.screen-time day files).
+  readonly property string screenTimeFile: NexusSuiteModel.screenTimeDayPath(
+    NexusSuiteModel.screenTimeDir(Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME")),
+    NexusSuiteModel.dayKey(now.getTime()))
+  property string screenTimeText: ""
+  readonly property var screenTimeSummary: NexusSuiteModel.screenTimeSummary(
+    screenTimeText, NexusSuiteModel.dayKey(now.getTime()))
+
+  FileView {
+    path: root.opened && root.settings.showScreenTime ? root.screenTimeFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.screenTimeText = text()
+    onLoadFailed: root.screenTimeText = ""
+    onFileChanged: reload()
+  }
+
+  // Calendar (community.calendar-agenda ICS caches).
+  readonly property string calendarCacheDir: NexusAgendaModel.stateDir(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  property var calendarTexts: []
+
+  Repeater {
+    model: 8
+
+    Item {
+      id: calendarDelegate
+      required property int index
+
+      FileView {
+        path: root.opened && root.settings.showNextEvent
+          ? NexusAgendaModel.cachePath(root.calendarCacheDir, calendarDelegate.index) : ""
+        printErrors: false
+        watchChanges: true
+        onLoaded: root.storeCalendarText(calendarDelegate.index, text())
+        onFileChanged: reload()
+      }
+    }
+  }
+
+  function storeCalendarText(index, text) {
+    var next = calendarTexts.slice()
+    while (next.length <= index) next.push("")
+    next[index] = text
+    calendarTexts = next
+  }
+
+  readonly property var nextEvent: NexusAgendaModel.upcoming(
+    NexusAgendaModel.mergeAgendas(calendarTexts, 7, now.getTime()), now.getTime())
+
+  // Pomodoro (shared state file with community.pomodoro). Nexus reads and
+  // starts/pauses sessions; expiry is resolved here too while open, which
+  // is benign alongside the bar widget (identical resolved content).
+  readonly property string pomodoroFile: NexusPomodoroModel.statePath(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  readonly property var pomodoroConfig: NexusPomodoroModel.readConfig({})
+  property var pomodoroSession: NexusPomodoroModel.idleState()
+
+  FileView {
+    path: root.opened ? root.pomodoroFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.pomodoroSession = NexusPomodoroModel.parseState(text())
+    onLoadFailed: root.pomodoroSession = NexusPomodoroModel.idleState()
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: pomodoroWriter
+    path: root.pomodoroFile
+    printErrors: false
+    atomicWrites: true
+    onSaved: reload()
+  }
+
+  function persistPomodoro(next) {
+    pomodoroSession = next
+    pomodoroWriter.setText(NexusPomodoroModel.serializeState(next))
+  }
+
+  function togglePomodoro() {
+    var nowMs = Date.now()
+    if (pomodoroSession.phase === "idle")
+      persistPomodoro(NexusPomodoroModel.startPhase(pomodoroSession, "work", nowMs, pomodoroConfig))
+    else if (NexusPomodoroModel.isPaused(pomodoroSession))
+      persistPomodoro(NexusPomodoroModel.resume(pomodoroSession, nowMs))
+    else
+      persistPomodoro(NexusPomodoroModel.pause(pomodoroSession, nowMs))
+  }
+
+  function resolvePomodoroExpiry() {
+    if (pomodoroSession.phase === "idle" || NexusPomodoroModel.isPaused(pomodoroSession)) return
+    if (NexusPomodoroModel.remainingMs(pomodoroSession, Date.now()) > 0) return
+    persistPomodoro(NexusPomodoroModel.resolveState(pomodoroSession, Date.now(), pomodoroConfig))
+  }
+
+  // Notification history (the omarchy.notifications state file; clearing
+  // goes through the already-resolved service).
+  readonly property string notificationsFile: NexusSuiteModel.notificationsPath(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  property string notificationsText: ""
+  readonly property var notificationRows: NexusSuiteModel.parseNotifications(notificationsText, 40)
+
+  FileView {
+    path: root.opened ? root.notificationsFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.notificationsText = text()
+    onLoadFailed: root.notificationsText = ""
+    onFileChanged: reload()
+  }
+
+  function clearNotificationHistory() {
+    if (dndService && typeof dndService.clearPast === "function") dndService.clearPast()
+  }
+
+  // Quick notes: one markdown file, debounce-autosaved.
+  readonly property string notesFile: NexusSuiteModel.notesPath(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  property bool notesLoaded: false
+  property bool notesDirty: false
+
+  FileView {
+    id: notesReader
+    path: root.opened ? root.notesFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: {
+      if (!root.notesDirty) notesEditor.text = text()
+      root.notesLoaded = true
+    }
+    onLoadFailed: root.notesLoaded = true
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: notesWriter
+    path: root.notesFile
+    printErrors: false
+    atomicWrites: true
+    onSaved: {
+      root.notesDirty = false
+      reload()
+    }
+  }
+
+  function saveNotes() {
+    if (!notesDirty) return
+    notesWriter.setText(notesEditor.text)
+  }
+
+  Timer {
+    id: notesSaveTimer
+    running: root.notesDirty
+    interval: 1500
+    onTriggered: root.saveNotes()
+  }
+
   // ---- game mode (flag file shared with community.game-mode) ---------------
   // Presence of the flag in Omarchy's sourced toggles directory is the whole
   // state; removing it restores the user's exact config. The strip set comes
@@ -562,6 +732,11 @@ Item {
     controlCursor = -1
     keysQuery = ""
     if (page === "keys" && opened && !bindsProcess.running) bindsProcess.running = true
+    if (opened) Qt.callLater(function () {
+      if (!root.opened) return
+      if (root.page === "notes") notesEditor.forceActiveFocus()
+      else keyCatcher.forceActiveFocus()
+    })
   }
   // The cursor must never outlive its row: when a page loses rows (player
   // vanished, chip hidden), clamp back into range.
@@ -579,6 +754,8 @@ Item {
     { key: "showNetwork", label: "Network card", desc: "Live down/up throughput sparkline." },
     { key: "showSensors", label: "Sensors card", desc: "CPU/GPU/NVMe temperatures and fans." },
     { key: "showVisualizer", label: "Audio visualizer", desc: "Spectrum bars while media plays (needs cava installed)." },
+    { key: "showScreenTime", label: "Screen time card", desc: "Today's focused time (needs community.screen-time)." },
+    { key: "showNextEvent", label: "Next event line", desc: "Calendar countdown in the hero (needs community.calendar-agenda)." },
     { key: "showFetch", label: "System info line", desc: "hostname · kernel · uptime under the clock." },
     { key: "gmAnimations", label: "Animations", desc: "", section: "game" },
     { key: "gmBlur", label: "Blur", desc: "", section: "game" },
@@ -589,13 +766,14 @@ Item {
   ]
 
   readonly property int lastCursorIndex: {
-    if (page === "controls") return 9
+    if (page === "controls") return 10
     if (page === "overview") {
       if (!settings.showMedia || mediaSelected === null) return -1
       return mediaPlayerCount > 1 ? 2 : 1
     }
     if (page === "style") return 1
     if (page === "settings") return settingsRows.length - 1
+    if (page === "media") return mediaAllPlayers.length - 1
     return -1
   }
 
@@ -612,14 +790,22 @@ Item {
       else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
       else if (index === 6) dispatchControl("bluetooth", toggleBluetooth)
       else if (index === 7) toggleGameMode()
-      else if (index === 8) openMenuRoute("trigger.capture")
-      else if (index === 9) openMenuRoute("system")
+      else if (index === 8) togglePomodoro()
+      else if (index === 9) openMenuRoute("trigger.capture")
+      else if (index === 10) openMenuRoute("system")
     } else if (page === "style") {
       if (index === 0) openMenuRoute("style.theme")
       else if (index === 1) openMenuRoute("style.background")
     } else if (page === "settings") {
       var row = settingsRows[index]
       if (row) updateSetting(row.key, settings[row.key] !== true)
+    } else if (page === "media") {
+      var player = mediaAllPlayers[index]
+      if (player) {
+        selectPlayerByObject(player)
+        if (player.isPlaying && player.canPause) player.pause()
+        else if (!player.isPlaying && player.canPlay) player.play()
+      }
     }
   }
 
@@ -658,6 +844,14 @@ Item {
       host.summon("omarchy.menu", JSON.stringify({ menu: String(route) }))
   }
 
+  // Cross-plugin hand-off to a sibling panel (screen-time, calendar): close
+  // first so overlays never stack.
+  function summonSibling(pluginId) {
+    var host = shell
+    requestClose()
+    if (host && typeof host.summon === "function") host.summon(String(pluginId), "{}")
+  }
+
   // ---- media adapter -------------------------------------------------------
   // One direct MPRIS adapter; selection is the deterministic two-phase model
   // in NexusMediaModel. All reactivity is gated on `opened` (the watcher
@@ -671,6 +865,7 @@ Item {
   // exists, cleared on close. Count drives the chip's visibility.
   property string mediaOverrideKey: ""
   property int mediaPlayerCount: 0
+  property var mediaAllPlayers: []
   // Seek preview while dragging, so the bar tracks the pointer instead of
   // the (as yet unmoved) player position.
   property bool seekDragging: false
@@ -715,6 +910,19 @@ Item {
     mediaSerials = activity.serials
     mediaLastSerial = activity.lastSerial
     mediaPlayerCount = NexusMediaModel.countPlayers(recordsList)
+    // The full ordered representative list backs the Media page.
+    var representatives = NexusMediaModel.orderedRepresentatives(
+      recordsList, NexusMediaModel.normalizeIdentity(settings.preferredMediaIdentity), mediaSerials)
+    var ordered = []
+    for (var r = 0; r < representatives.length; r++) {
+      for (var p = 0; p < players.length; p++) {
+        if (players[p] && String(players[p].dbusName || "") === representatives[r].busName) {
+          ordered.push(players[p])
+          break
+        }
+      }
+    }
+    mediaAllPlayers = ordered
     var chosen = NexusMediaModel.selectPlayer(
       recordsList, settings.preferredMediaIdentity, mediaSerials, mediaOverrideKey)
     var next = null
@@ -727,6 +935,12 @@ Item {
       }
     }
     mediaSelected = next
+  }
+
+  function selectPlayerByObject(player) {
+    if (!player) return
+    mediaOverrideKey = mediaRecordOf(player).sourceKey
+    refreshMedia()
   }
 
   // Chip action: step to the next player in the deterministic order and pin
@@ -1159,6 +1373,12 @@ Item {
               consumed = root.mediaAction(forward ? "next" : "previous")
             } else if (root.page === "overview" && root.controlCursor === 1) {
               consumed = root.seekBy(forward ? 5 : -5)
+            } else if (root.page === "media" && root.controlCursor >= 0) {
+              var focusedPlayer = root.mediaAllPlayers[root.controlCursor]
+              if (focusedPlayer) {
+                if (forward && focusedPlayer.canGoNext) { focusedPlayer.next(); consumed = true }
+                else if (!forward && focusedPlayer.canGoPrevious) { focusedPlayer.previous(); consumed = true }
+              }
             }
             if (!consumed)
               root.setPage(NexusModel.adjacentPage(root.page, forward ? 1 : -1))
@@ -1207,6 +1427,20 @@ Item {
                 color: Qt.darker(Color.menu.text, 1.3)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
+              }
+              Text {
+                visible: root.settings.showNextEvent && root.nextEvent !== null
+                width: parent.width
+                text: "󰃭 " + NexusAgendaModel.countdownLabel(root.nextEvent, root.now.getTime())
+                color: Color.accent
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: root.summonSibling("community.calendar-agenda")
+                }
               }
               Text {
                 visible: text.length > 0
@@ -1300,7 +1534,11 @@ Item {
 
                 Button {
                   required property string modelData
-                  text: NexusModel.pageTitle(modelData)
+                  // Narrow pages render icon-only so the row fits the card.
+                  readonly property string icon: NexusModel.pageIcon(modelData)
+                  text: icon === "" ? NexusModel.pageTitle(modelData) : ""
+                  iconText: icon
+                  tooltipText: icon === "" ? "" : NexusModel.pageTitle(modelData)
                   active: root.page === modelData
                   onClicked: root.setPage(modelData)
                 }
@@ -1767,6 +2005,291 @@ Item {
             }
           }
 
+          // ---- overview: screen time (community.screen-time day file) -----
+          BorderSurface {
+            visible: root.page === "overview" && root.settings.showScreenTime
+              && root.screenTimeSummary !== null
+            width: parent.width
+            implicitHeight: screenTimeRow.implicitHeight + Style.spacing.rowPaddingX * 2
+            radius: Style.cornerRadius
+            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
+            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+
+            Item {
+              id: screenTimeRow
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(12)
+              implicitHeight: screenTimeLabel.implicitHeight
+
+              Text {
+                id: screenTimeLabel
+                anchors.left: parent.left
+                text: "󱎫 Screen time"
+                color: Color.menu.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+
+              Text {
+                anchors.right: parent.right
+                text: NexusSuiteModel.screenTimeLine(root.screenTimeSummary)
+                color: Qt.darker(Color.menu.text, 1.25)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              onClicked: root.summonSibling("community.screen-time")
+            }
+          }
+
+          // ---- media page: every active player ----------------------------
+          Column {
+            visible: root.page === "media"
+            width: parent.width
+            spacing: Style.space(4)
+
+            Text {
+              visible: root.mediaAllPlayers.length === 0
+              width: parent.width
+              text: "No active media players."
+              color: Qt.darker(Color.menu.text, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Repeater {
+              model: root.mediaAllPlayers
+
+              CursorSurface {
+                id: playerRow
+                required property var modelData
+                required property int index
+                readonly property bool isSelected: root.mediaSelected === modelData
+                width: parent.width
+                implicitHeight: playerInner.implicitHeight + Style.spacing.rowPaddingX * 2
+                outline: true
+                foreground: Color.menu.text
+                hasCursor: root.controlCursor === index && root.page === "media"
+                current: isSelected
+
+                HoverHandler {
+                  onHoveredChanged: if (hovered) root.controlCursor = playerRow.index
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: root.selectPlayerByObject(playerRow.modelData)
+                }
+
+                Row {
+                  id: playerInner
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.leftMargin: Style.space(12)
+                  anchors.rightMargin: Style.space(12)
+                  spacing: Style.space(10)
+
+                  Column {
+                    width: parent.width - playerButtons.width - Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    Text {
+                      width: parent.width
+                      text: (playerRow.isSelected ? "● " : "")
+                        + (playerRow.modelData.identity || playerRow.modelData.dbusName || "Player")
+                      color: playerRow.isSelected ? Color.accent : Color.menu.text
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                      elide: Text.ElideRight
+                    }
+                    Text {
+                      width: parent.width
+                      visible: text.length > 0
+                      text: {
+                        var title = playerRow.modelData.trackTitle || ""
+                        var artist = playerRow.modelData.trackArtist || ""
+                        return title + (artist !== "" ? " — " + artist : "")
+                      }
+                      color: Qt.darker(Color.menu.text, 1.35)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                  }
+
+                  Row {
+                    id: playerButtons
+                    spacing: Style.spacing.controlGap
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Button {
+                      iconText: "󰒮"
+                      enabled: playerRow.modelData.canGoPrevious === true
+                      onClicked: playerRow.modelData.previous()
+                    }
+                    Button {
+                      iconText: playerRow.modelData.isPlaying ? "󰏤" : "󰐊"
+                      enabled: playerRow.modelData.isPlaying
+                        ? playerRow.modelData.canPause === true
+                        : playerRow.modelData.canPlay === true
+                      onClicked: playerRow.modelData.isPlaying
+                        ? playerRow.modelData.pause() : playerRow.modelData.play()
+                    }
+                    Button {
+                      iconText: "󰒭"
+                      enabled: playerRow.modelData.canGoNext === true
+                      onClicked: playerRow.modelData.next()
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- notes page: autosaving scratchpad --------------------------
+          Column {
+            visible: root.page === "notes"
+            width: parent.width
+            spacing: Style.space(4)
+
+            BorderSurface {
+              width: parent.width
+              implicitHeight: Math.max(Style.space(220), notesEditor.implicitHeight + Style.space(20))
+              radius: Style.cornerRadius
+              color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
+              borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+
+              TextEdit {
+                id: notesEditor
+                anchors.fill: parent
+                anchors.margins: Style.space(10)
+                wrapMode: TextEdit.Wrap
+                color: Color.menu.text
+                selectionColor: Color.accent
+                selectedTextColor: Color.menu.background
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+                onTextChanged: if (root.notesLoaded && root.page === "notes") root.notesDirty = true
+                Keys.onEscapePressed: root.requestClose()
+              }
+            }
+
+            Text {
+              width: parent.width
+              text: (root.notesDirty ? "Saving…" : "Saved")
+                + " · " + notesEditor.text.length + " characters · markdown at "
+                + root.notesFile.replace(/^.*omarchy\//, "…/omarchy/")
+              color: Qt.darker(Color.menu.text, 1.5)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
+            }
+          }
+
+          // ---- alerts page: notification history --------------------------
+          Column {
+            visible: root.page === "alerts"
+            width: parent.width
+            spacing: Style.space(4)
+
+            Item {
+              width: parent.width
+              height: alertsTitle.implicitHeight
+
+              Text {
+                id: alertsTitle
+                anchors.left: parent.left
+                text: root.notificationRows.length + " recent notifications"
+                color: Color.menu.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+
+              Button {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.notificationRows.length > 0 && root.dndService !== null
+                text: "Clear history"
+                fontSize: Style.font.caption
+                onClicked: root.clearNotificationHistory()
+              }
+            }
+
+            Text {
+              visible: root.notificationRows.length === 0
+              width: parent.width
+              text: "No recent notifications."
+              color: Qt.darker(Color.menu.text, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Repeater {
+              model: root.notificationRows
+
+              Column {
+                required property var modelData
+                width: parent.width
+                spacing: Style.space(1)
+                bottomPadding: Style.space(5)
+
+                Item {
+                  width: parent.width
+                  height: alertApp.implicitHeight
+
+                  Text {
+                    id: alertApp
+                    anchors.left: parent.left
+                    text: (modelData.pending ? "● " : "") + (modelData.app || "unknown")
+                    color: modelData.urgency >= 2 ? Color.urgent
+                      : (modelData.pending ? Color.accent : Qt.darker(Color.menu.text, 1.25))
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  Text {
+                    anchors.right: parent.right
+                    text: NexusSuiteModel.relativeTime(modelData.timestamp, root.now.getTime())
+                    color: Qt.darker(Color.menu.text, 1.5)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  text: modelData.summary || "(no summary)"
+                  color: Color.menu.text
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  visible: text.length > 0
+                  text: modelData.body
+                  color: Qt.darker(Color.menu.text, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+              }
+            }
+          }
+
           // ---- keys: searchable keybind cheatsheet ------------------------
           Column {
             visible: root.page === "keys"
@@ -2023,6 +2546,29 @@ Item {
                 root.toggleGameMode()
               }
             }
+
+            Toggle {
+              width: parent.width
+              label: "Pomodoro"
+              description: root.pomodoroSession.phase === "idle"
+                ? "Start a focus session (" + root.pomodoroSession.todayCount + " done today)."
+                : NexusPomodoroModel.labelFor(root.pomodoroSession.phase)
+                  + (NexusPomodoroModel.isPaused(root.pomodoroSession) ? " (paused)" : "")
+                  + " — " + NexusPomodoroModel.formatRemaining(
+                      NexusPomodoroModel.remainingMs(root.pomodoroSession, root.now.getTime()))
+                  + " left. Click to " + (NexusPomodoroModel.isPaused(root.pomodoroSession) ? "resume" : "pause") + "."
+              checked: root.pomodoroSession.phase !== "idle"
+                && !NexusPomodoroModel.isPaused(root.pomodoroSession)
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 8 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 8 }
+              onClicked: {
+                root.controlCursor = 8
+                root.togglePomodoro()
+              }
+            }
           }
 
           // ---- controls: capture and power quick actions ------------------
@@ -2033,15 +2579,15 @@ Item {
             Button {
               iconText: ""
               text: "Capture"
-              hasCursor: root.controlCursor === 8 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 8 }
+              hasCursor: root.controlCursor === 9 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 9 }
               onClicked: root.openMenuRoute("trigger.capture")
             }
             Button {
               iconText: "󰐥"
               text: "Power"
-              hasCursor: root.controlCursor === 9 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 9 }
+              hasCursor: root.controlCursor === 10 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 10 }
               onClicked: root.openMenuRoute("system")
             }
           }
@@ -2126,6 +2672,27 @@ Item {
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
               font.bold: true
+            }
+
+            // Presets batch-set the six toggles below; "custom" is whatever
+            // the individual switches say.
+            Row {
+              spacing: Style.spacing.controlGap
+
+              Repeater {
+                model: NexusSuiteModel.GAME_MODE_PRESETS
+
+                Button {
+                  required property var modelData
+                  text: modelData.label
+                  active: NexusSuiteModel.activePreset(root.settings) === modelData.key
+                  fontSize: Style.font.caption
+                  onClicked: {
+                    for (var key in modelData.settings)
+                      root.updateSetting(key, modelData.settings[key])
+                  }
+                }
+              }
             }
 
             Repeater {

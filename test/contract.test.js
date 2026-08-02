@@ -57,8 +57,8 @@ assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or close
 // cadence). The sixth, pendingClearTimer, is a one-shot 400 ms clear
 // started only from dispatchControl, which no-ops while closed. Pinning the
 // total means any new timer fails this test until reviewed for dormancy.
-assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 6,
-  'the timer inventory is pinned: a new timer must be reviewed for dormancy')
+assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 7,
+  'the timer inventory is pinned: a new timer must be reviewed for dormancy (the seventh is the notes autosave debounce, gated on notesDirty)')
 assert.equal((nexus.match(/running: root\.opened/g) || []).length, 6,
   'five recurring timers plus the cava process are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
@@ -281,10 +281,26 @@ assert.match(nexus, /hasCursor: root\.controlCursor === 0 && root\.page === "sty
   'style rows carry a page-scoped keyboard cursor')
 assert.match(nexus, /hasCursor: root\.controlCursor === 2 && root\.page === "overview"/,
   'the overview player-cycle row is a cursor row')
-assert.match(nexus, /hasCursor: root\.controlCursor === 7 && root\.page === "controls"/,
+assert.match(nexus, /hasCursor: root\.controlCursor === 9 && root\.page === "controls"/,
   'the capture row is a cursor row')
-assert.match(nexus, /hasCursor: root\.controlCursor === 8 && root\.page === "controls"/,
+assert.match(nexus, /hasCursor: root\.controlCursor === 10 && root\.page === "controls"/,
   'the power row is a cursor row')
+
+// Suite integrations: read-only views over sibling state files, watch-
+// driven, zero subprocesses; absent files hide their cards.
+assert.match(nexus, /NexusSuiteModel\.screenTimeSummary/)
+assert.match(nexus, /NexusSuiteModel\.parseNotifications/)
+assert.match(nexus, /NexusAgendaModel\.mergeAgendas/)
+assert.match(nexus, /NexusAgendaModel\.upcoming/)
+assert.match(nexus, /NexusPomodoroModel\.parseState/)
+assert.match(nexus, /NexusPomodoroModel\.resolveState/, 'expired sessions resolve while open')
+assert.match(nexus, /root\.settings\.showScreenTime/)
+assert.match(nexus, /root\.settings\.showNextEvent/)
+assert.match(nexus, /summonSibling/, 'cross-plugin hand-offs close Nexus first')
+assert.match(nexus, /clearPast/, 'history clearing goes through the first-party service')
+assert.match(nexus, /running: root\.notesDirty/, 'the autosave debounce only runs while dirty')
+assert.match(nexus, /NexusSuiteModel\.GAME_MODE_PRESETS/)
+assert.match(nexus, /NexusModel\.pageIcon/, 'narrow pages render icon-only tabs')
 assert.equal((nexus.match(/hasCursor: root\.controlCursor === \d && root\.page === "style"/g) || []).length, 2,
   'both style rows are cursor rows')
 assert.match(nexus, /if \(event\.angleDelta\.y === 0\) return/,

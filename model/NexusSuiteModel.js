@@ -1,0 +1,177 @@
+// Suite-integration model for Omarchy Nexus: read-only views over the
+// state files its sibling plugins maintain (screen-time day files, calendar
+// caches, the pomodoro session) plus the first-party notification history.
+// Loaded by both QML and the Node test harness; dependency-free.
+
+// ---- screen time (community.screen-time day files) --------------------------
+
+function screenTimeDir(xdgStateHome, home) {
+  var base = typeof xdgStateHome === "string" && xdgStateHome.trim().length > 0
+    ? xdgStateHome.trim()
+    : String(home == null ? "" : home) + "/.local/state"
+  return base + "/omarchy/screen-time"
+}
+
+function dayKey(nowMs) {
+  var d = new Date(Number(nowMs))
+  var pad = function (n) { return n < 10 ? "0" + n : String(n) }
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+}
+
+function screenTimeDayPath(dir, key) {
+  return dir + "/" + key + ".json"
+}
+
+// Summarize a day file: total time and the top app. Malformed input is an
+// absent card, never an error.
+function screenTimeSummary(text, expectedKey) {
+  var parsed = null
+  if (typeof text === "string" && text.length > 0) {
+    try { parsed = JSON.parse(text) } catch (error) { parsed = null }
+  }
+  if (!parsed || parsed.date !== expectedKey || !Array.isArray(parsed.spans)) return null
+  var totals = {}
+  var totalMs = 0
+  for (var i = 0; i < parsed.spans.length; i++) {
+    var span = parsed.spans[i]
+    if (!Array.isArray(span) || span.length < 3) continue
+    var duration = Number(span[2]) - Number(span[1])
+    if (!isFinite(duration) || duration <= 0) continue
+    totals[String(span[0])] = (totals[String(span[0])] || 0) + duration
+    totalMs += duration
+  }
+  if (totalMs <= 0) return null
+  var topApp = ""
+  var topMs = 0
+  for (var app in totals) {
+    if (totals[app] > topMs) { topMs = totals[app]; topApp = app }
+  }
+  return { totalMs: totalMs, topApp: topApp, topMs: topMs }
+}
+
+function formatHours(ms) {
+  var minutes = Math.floor(Math.max(0, Number(ms)) / 60000)
+  var hours = Math.floor(minutes / 60)
+  if (hours > 0) return hours + " h " + (minutes % 60) + " m"
+  if (minutes > 0) return minutes + " m"
+  return "<1 m"
+}
+
+function appLabel(appId) {
+  var id = String(appId == null ? "" : appId)
+  var parts = id.split(".")
+  var last = parts[parts.length - 1]
+  if (last.length === 0) return id
+  return last.charAt(0).toUpperCase() + last.slice(1)
+}
+
+function screenTimeLine(summary) {
+  if (!summary) return ""
+  var text = formatHours(summary.totalMs) + " today"
+  if (summary.topApp !== "")
+    text += " · " + appLabel(summary.topApp) + " " + formatHours(summary.topMs)
+  return text
+}
+
+// ---- notification history (omarchy.notifications state file) ---------------
+
+function notificationsPath(xdgStateHome, home) {
+  var base = typeof xdgStateHome === "string" && xdgStateHome.trim().length > 0
+    ? xdgStateHome.trim()
+    : String(home == null ? "" : home) + "/.local/state"
+  return base + "/omarchy/notifications.json"
+}
+
+// The v2 file carries pending (unseen) and past rows; merge both, newest
+// first, validated field by field.
+function parseNotifications(text, cap) {
+  var parsed = null
+  if (typeof text === "string" && text.length > 0) {
+    try { parsed = JSON.parse(text) } catch (error) { parsed = null }
+  }
+  if (!parsed || typeof parsed !== "object") return []
+  var rows = []
+  var sources = [
+    { list: parsed.pending, pending: true },
+    { list: parsed.past, pending: false }
+  ]
+  for (var s = 0; s < sources.length; s++) {
+    var list = Array.isArray(sources[s].list) ? sources[s].list : []
+    for (var i = 0; i < list.length; i++) {
+      var row = list[i]
+      if (!row || typeof row !== "object") continue
+      var timestamp = Number(row.timestamp)
+      if (!isFinite(timestamp) || timestamp <= 0) continue
+      rows.push({
+        app: typeof row.app === "string" ? row.app : "",
+        summary: typeof row.summary === "string" ? row.summary : "",
+        body: typeof row.body === "string" ? row.body.replace(/\s+/g, " ").trim() : "",
+        urgency: Number(row.urgency) || 0,
+        timestamp: timestamp,
+        pending: sources[s].pending
+      })
+    }
+  }
+  rows.sort(function (a, b) { return b.timestamp - a.timestamp })
+  var limit = Number(cap)
+  if (!isFinite(limit) || limit < 1) limit = 50
+  return rows.slice(0, limit)
+}
+
+function relativeTime(timestampMs, nowMs) {
+  var deltaMinutes = Math.floor((Number(nowMs) - Number(timestampMs)) / 60000)
+  if (deltaMinutes < 1) return "now"
+  if (deltaMinutes < 60) return deltaMinutes + " m ago"
+  var hours = Math.floor(deltaMinutes / 60)
+  if (hours < 24) return hours + " h ago"
+  return Math.floor(hours / 24) + " d ago"
+}
+
+// ---- quick notes ------------------------------------------------------------
+
+function notesPath(xdgStateHome, home) {
+  var base = typeof xdgStateHome === "string" && xdgStateHome.trim().length > 0
+    ? xdgStateHome.trim()
+    : String(home == null ? "" : home) + "/.local/state"
+  return base + "/omarchy/nexus-notes.md"
+}
+
+// ---- game-mode presets ------------------------------------------------------
+
+// Preset buttons batch-set the six gm* booleans; "custom" is whatever the
+// individual toggles say. Detection compares the current set to each preset.
+var GAME_MODE_PRESETS = [
+  { key: "full", label: "Full", settings: { gmAnimations: true, gmBlur: true, gmShadows: true, gmGaps: true, gmRounding: true, gmTearing: true } },
+  { key: "effects", label: "Effects only", settings: { gmAnimations: true, gmBlur: true, gmShadows: true, gmGaps: false, gmRounding: false, gmTearing: false } },
+  { key: "minimal", label: "Minimal", settings: { gmAnimations: true, gmBlur: false, gmShadows: false, gmGaps: false, gmRounding: false, gmTearing: false } }
+]
+
+function activePreset(settings) {
+  for (var i = 0; i < GAME_MODE_PRESETS.length; i++) {
+    var preset = GAME_MODE_PRESETS[i]
+    var matches = true
+    for (var key in preset.settings) {
+      if ((settings[key] === true) !== preset.settings[key]) { matches = false; break }
+    }
+    if (matches) return preset.key
+  }
+  return "custom"
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    screenTimeDir: screenTimeDir,
+    dayKey: dayKey,
+    screenTimeDayPath: screenTimeDayPath,
+    screenTimeSummary: screenTimeSummary,
+    formatHours: formatHours,
+    appLabel: appLabel,
+    screenTimeLine: screenTimeLine,
+    notificationsPath: notificationsPath,
+    parseNotifications: parseNotifications,
+    relativeTime: relativeTime,
+    notesPath: notesPath,
+    GAME_MODE_PRESETS: GAME_MODE_PRESETS,
+    activePreset: activePreset
+  }
+}

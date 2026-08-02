@@ -34,23 +34,27 @@ assert.deepEqual(model.normalizePayload('{"page":"bogus"}', 'style'), { page: 's
 assert.deepEqual(model.normalizePayload('{}', 'bogus'), { page: 'overview' },
   'an invalid fallback cannot smuggle in an unknown page')
 
-// Tab cycling wraps in both directions (keys and settings included) and
-// recovers from invalid state.
-assert.equal(model.adjacentPage('overview', 1), 'controls')
-assert.equal(model.adjacentPage('controls', 1), 'style')
-assert.equal(model.adjacentPage('style', 1), 'keys')
-assert.equal(model.adjacentPage('keys', 1), 'settings')
-assert.equal(model.adjacentPage('settings', 1), 'overview')
-assert.equal(model.adjacentPage('overview', -1), 'settings')
-assert.equal(model.adjacentPage('style', -1), 'controls')
+// Tab cycling walks the whole PAGES ring in both directions, whatever the
+// page list grows to, and recovers from invalid state.
+for (let i = 0; i < model.PAGES.length; i++) {
+  const here = model.PAGES[i]
+  assert.equal(model.adjacentPage(here, 1), model.PAGES[(i + 1) % model.PAGES.length])
+  assert.equal(model.adjacentPage(here, -1),
+    model.PAGES[(i - 1 + model.PAGES.length) % model.PAGES.length])
+}
 assert.equal(model.adjacentPage('bogus', 1), 'overview')
 assert.equal(model.adjacentPage('', -1), 'overview')
 
-// The labelled tab row excludes settings (the cog owns it).
-assert.deepEqual(model.tabPages(), ['overview', 'controls', 'style', 'keys'])
+// The tab row shows every page except settings (the cog owns it).
+assert.deepEqual(model.tabPages(), model.PAGES.filter(p => p !== 'settings'))
 
-// The keys page is payload-reachable.
-assert.deepEqual(model.normalizePayload('{"page":"keys"}'), { page: 'keys' })
+// Every page is payload-reachable, and the narrow pages carry tab icons.
+for (const page of model.PAGES) {
+  assert.deepEqual(model.normalizePayload(JSON.stringify({ page })), { page })
+}
+assert.ok(model.pageIcon('keys').length > 0)
+assert.ok(model.pageIcon('media').length > 0)
+assert.equal(model.pageIcon('overview'), '', 'wide pages stay labelled')
 
 // Display helpers cover every page and fall back for invalid input. Every
 // page has real content now, so all placeholders are empty.

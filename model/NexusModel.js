@@ -2,16 +2,27 @@
 // entry point and the Node test harness, so it must stay dependency-free.
 
 // "settings" is a full page (payloads and Tab cycling reach it) but renders
-// in the tab row as the trailing cog rather than a labelled tab.
-var PAGES = ["overview", "controls", "style", "keys", "settings"]
+// in the tab row as the trailing cog rather than a labelled tab. Pages with
+// an icon render icon-only in the tab row to keep it inside the card width.
+var PAGES = ["overview", "media", "controls", "style", "keys", "notes", "alerts", "settings"]
 var DEFAULT_PAGE = "overview"
 
 var PAGE_TITLES = {
   overview: "Overview",
+  media: "Media",
   controls: "Controls",
   style: "Style",
   keys: "Keys",
+  notes: "Notes",
+  alerts: "Alerts",
   settings: "Settings"
+}
+
+var PAGE_ICONS = {
+  media: "󰎈",
+  keys: "󰌌",
+  notes: "󰎞",
+  alerts: "󰂚"
 }
 
 // Pages with real content use the empty string: the panel hides the
@@ -19,9 +30,12 @@ var PAGE_TITLES = {
 // expansion pages can reuse this mechanism.
 var PAGE_PLACEHOLDERS = {
   overview: "",
+  media: "",
   controls: "",
   style: "",
   keys: "",
+  notes: "",
+  alerts: "",
   settings: ""
 }
 
@@ -70,6 +84,11 @@ function pageTitle(page) {
   return PAGE_TITLES[page] || PAGE_TITLES[DEFAULT_PAGE]
 }
 
+// Icon for icon-only tabs; empty string means a labelled tab.
+function pageIcon(page) {
+  return PAGE_ICONS[page] || ""
+}
+
 function pagePlaceholder(page) {
   return PAGE_PLACEHOLDERS[page] || PAGE_PLACEHOLDERS[DEFAULT_PAGE]
 }
@@ -82,6 +101,7 @@ if (typeof module !== "undefined") {
     normalizePayload: normalizePayload,
     adjacentPage: adjacentPage,
     pageTitle: pageTitle,
+    pageIcon: pageIcon,
     pagePlaceholder: pagePlaceholder
   }
 }
