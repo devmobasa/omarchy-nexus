@@ -27,6 +27,18 @@ keystroke away, fully dormant when closed.
 - **Keys** — a searchable cheatsheet of every live Hyprland keybind (from
   `hyprctl binds`, so it never goes stale): just start typing to filter,
   Backspace edits, Esc clears.
+- **Media page** — every active player with its own transport, selection,
+  and per-player Left/Right track skipping.
+- **Notes** — one quick markdown scratch file with debounced autosave.
+- **Clipboard** — recent text clips, click to copy back; image clips hand
+  off to the full first-party manager.
+- **Minimizer** — windows stashed on `special:minimized` (pairs with a
+  Super+M minimize-to-tray script setup), newest first with their origin
+  workspace, a hover/cursor preview (the scripts' pre-captured thumbnail,
+  falling back to a live toplevel capture), and click/Enter to restore to
+  the current workspace. The scripts' sidecar files are read-only to Nexus.
+- **Alerts** — pending and recent notification history with one-click
+  clearing through the first-party service.
 - **Sensors** — CPU/GPU/NVMe temperatures and fan RPMs on Overview,
   discovered per machine (hybrid-GPU aware: an NVIDIA display GPU is read
   via `nvidia-smi`, AMD via sysfs; fans hide when a machine has none).
@@ -66,7 +78,8 @@ omarchy-shell shell toggle community.omarchy-nexus '{}'
 ```
 
 The payload may name a page directly: `'{"page":"controls"}'` (pages:
-`overview`, `controls`, `style`, `settings`).
+`overview`, `media`, `controls`, `style`, `keys`, `notes`, `clipboard`,
+`minimizer`, `alerts`, `settings`).
 
 ### Bar shortcut
 

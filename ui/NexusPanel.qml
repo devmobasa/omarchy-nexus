@@ -205,6 +205,10 @@ PanelWindow {
                             nexus: panel.nexus
                         }
 
+                        NexusMinimizerPage {
+                            nexus: panel.nexus
+                        }
+
                         NexusNotificationsPage {
                             nexus: panel.nexus
                         }

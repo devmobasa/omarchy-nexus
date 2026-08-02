@@ -70,6 +70,7 @@ Item {
     readonly property var pomodoroSession: suite.pomodoroSession
     readonly property var notificationRows: suite.notificationRows
     readonly property var clipboardRows: suite.clipboardRows
+    readonly property var minimizerRows: minimizer.minimizerRows
     readonly property string copiedPreview: suite.copiedPreview
     readonly property string notesFile: suite.notesFile
     readonly property bool notesLoaded: suite.notesLoaded
@@ -134,6 +135,9 @@ Item {
         if (page === NexusModel.PAGE_CLIPBOARD)
             return clipboardRows.length - 1;
 
+        if (page === NexusModel.PAGE_MINIMIZER)
+            return minimizerRows.length - 1;
+
         return -1;
     }
 
@@ -179,6 +183,7 @@ Item {
         sensors.resetSession();
         cava.resetSession();
         suite.resetTransient();
+        minimizer.resetSession();
         persistence.resetTransient();
         closingFromHost = false;
     }
@@ -304,6 +309,8 @@ Item {
             }
         } else if (page === NexusModel.PAGE_CLIPBOARD) {
             copyClipboardRow(clipboardRows[index]);
+        } else if (page === NexusModel.PAGE_MINIMIZER) {
+            restoreMinimized(minimizerRows[index]);
         }
     }
 
@@ -337,6 +344,7 @@ Item {
     function togglePomodoro() { suite.togglePomodoro() }
     function clearNotificationHistory() { suite.clearNotificationHistory() }
     function copyClipboardRow(row) { suite.copyClipboardRow(row) }
+    function restoreMinimized(row) { minimizer.restoreRow(row) }
     function updateNotes(text) { suite.updateNotes(text) }
     function refreshMedia() { media.refreshMedia() }
     function selectPlayerByObject(player) { media.selectPlayerByObject(player) }
@@ -436,6 +444,12 @@ Item {
 
     NexusSuiteState {
         id: suite
+
+        nexus: root
+    }
+
+    NexusMinimizerState {
+        id: minimizer
 
         nexus: root
     }

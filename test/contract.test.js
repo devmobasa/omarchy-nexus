@@ -341,6 +341,30 @@ assert.match(nexus, /if \(event\.angleDelta\.y === 0\)\s+return/,
 assert.match(nexus, /if \(!consumed\)\s*\n\s*root\.setPage/,
   'Left\/Right falls back to page cycling when the focused row rejects it')
 
+// Minimizer: integrates the user's hyprland-minimizer scripts. Rows merge
+// live special:minimized toplevels with the scripts' sidecar; restores use
+// the scripts' exact dispatch semantics through validated model builders;
+// the sidecar is strictly read-only from Nexus (the scripts' own prune
+// pass self-heals it) and no subprocess is involved anywhere.
+const minimizerState = read('state/NexusMinimizerState.qml')
+assert.match(minimizerState, /NexusMinimizerModel\.rows\(/, 'rows merge through the tested model')
+assert.match(minimizerState, /NexusMinimizerModel\.parseSidecar/, 'sidecar text parses through the model')
+assert.match(minimizerState, /NexusMinimizerModel\.parseHistory/, 'recency order parses through the model')
+assert.match(minimizerState, /NexusMinimizerModel\.restoreDispatch/, 'the move builds through the validated model')
+assert.match(minimizerState, /NexusMinimizerModel\.focusDispatch/, 'the focus builds through the validated model')
+assert.match(minimizerState, /Hyprland\.dispatch\(move\)/, 'restore dispatches in-process, no subprocess')
+assert.doesNotMatch(minimizerState, /setText|atomicWrites|\bProcess\s*\{/,
+  'Nexus never writes the scripts\' sidecar or spawns processes for it')
+const minimizerModel = read('model/NexusMinimizerModel.js')
+assert.match(minimizerModel, /follow = true/, 'restore follows the window, matching Super+R')
+assert.match(minimizerModel, /isValidAddress/, 'nothing unvalidated reaches the Lua dispatch strings')
+const minimizerPage = read('ui/NexusMinimizerPage.qml')
+assert.match(minimizerPage, /ScreencopyView/, 'hover preview falls back to a live toplevel capture')
+assert.match(minimizerPage, /NexusMinimizerModel\.thumbUrl/,
+  'thumb URLs encode through the model (titles land in filenames verbatim)')
+assert.match(nexus, /hasCursor: root\.controlCursor === index && root\.page === NexusModel\.PAGE_MINIMIZER/,
+  'minimizer rows carry the page-scoped keyboard cursor')
+
 // Theme integration comes from shared tokens only.
 assert.match(nexus, /import qs\.Commons/, 'uses shared Color/Style/Border singletons')
 assert.match(nexus, /import qs\.Ui/, 'uses shared UI components')
