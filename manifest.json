@@ -2,12 +2,20 @@
   "schemaVersion": 1,
   "id": "community.omarchy-nexus",
   "name": "Omarchy Nexus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "devmobasa",
   "description": "A themed desktop cockpit for media, system state, controls, and style",
   "license": "MIT",
-  "kinds": ["panel"],
+  "kinds": ["panel", "bar-widget"],
   "entryPoints": {
-    "panel": "Nexus.qml"
+    "panel": "Nexus.qml",
+    "barWidget": "NexusBarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Nexus",
+    "description": "Toggle the Nexus cockpit panel",
+    "category": "Plugin",
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

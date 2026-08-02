@@ -14,19 +14,48 @@ for (const input of [null, undefined, [], {}, 'x', [null, 'x', 42], [{ id: 'othe
 }
 
 // A matching entry overrides only with valid values.
-assert.deepEqual(read([{ id: ID, defaultPage: 'controls', monitor: 'DP-3', showMedia: false, showMetrics: false, showNetwork: false, showFetch: false, preferredMediaIdentity: 'Spotify' }]), {
-  defaultPage: 'controls',
-  monitor: 'DP-3',
-  showMedia: false,
-  showMetrics: false,
-  showNetwork: false,
-  showFetch: false,
-  preferredMediaIdentity: 'Spotify'
-})
+const disabled = read([{ id: ID, defaultPage: 'controls', monitor: 'DP-3', showMedia: false, showMetrics: false, showNetwork: false, showFetch: false, showBattery: false, gmBlur: false, preferredMediaIdentity: 'Spotify' }])
+assert.equal(disabled.defaultPage, 'controls')
+assert.equal(disabled.monitor, 'DP-3')
+assert.equal(disabled.showMedia, false)
+assert.equal(disabled.showMetrics, false)
+assert.equal(disabled.showNetwork, false)
+assert.equal(disabled.showFetch, false)
+assert.equal(disabled.showBattery, false)
+assert.equal(disabled.gmBlur, false)
+assert.equal(disabled.showCpu, true, 'untouched fields keep their defaults')
+assert.equal(disabled.gmAnimations, true)
+assert.equal(disabled.preferredMediaIdentity, 'Spotify')
 
 // Invalid values fall back field by field; extra fields are ignored.
-assert.deepEqual(read([{ id: ID, defaultPage: 'bogus', monitor: '   ', showMedia: 'yes', showMetrics: 1, showNetwork: 0, showFetch: 'no', preferredMediaIdentity: 42, extra: true }]),
+assert.deepEqual(read([{ id: ID, defaultPage: 'bogus', monitor: '   ', showMedia: 'yes', showMetrics: 1, showNetwork: 0, showFetch: 'no', showBattery: 'off', gmGaps: null, preferredMediaIdentity: 42, extra: true }]),
   settings.DEFAULTS)
+
+// ---- interactive state layer ------------------------------------------------
+
+// The state file overrides the shell.json layer for the fields it owns.
+const base = read([{ id: ID, showMedia: false }])
+const merged = settings.applyState(base, settings.parseState('{"showMedia": true, "showBattery": false}'))
+assert.equal(merged.showMedia, true, 'state file wins over the shell.json layer')
+assert.equal(merged.showBattery, false)
+assert.equal(merged.showCpu, true)
+assert.equal(merged.defaultPage, 'overview', 'non-state fields pass through untouched')
+
+// Malformed or hostile state parses to no overrides.
+for (const bad of [null, '', 'not json', '[1,2]', '"showMedia"', '{"showMedia":"yes","defaultPage":"style","bogus":true}']) {
+  assert.deepEqual(settings.parseState(bad), {}, `${JSON.stringify(bad)} yields no overrides`)
+}
+assert.deepEqual(settings.parseState('{"showFetch":false,"gmTearing":false}'),
+  { showFetch: false, gmTearing: false })
+
+// Serialization round-trips through the parser and keeps only known fields.
+const written = settings.buildStateJson({ showBattery: false, gmBlur: true, bogus: 1, showMedia: 'x' })
+assert.deepEqual(settings.parseState(written), { showBattery: false, gmBlur: true })
+assert.ok(written.endsWith('\n'), 'the state file ends with a newline')
+
+// XDG-aware state path.
+assert.equal(settings.statePath(null, '/home/u'), '/home/u/.local/state/omarchy/settings/nexus.json')
+assert.equal(settings.statePath('/custom', '/home/u'), '/custom/omarchy/settings/nexus.json')
 
 // Only the exact id matches; the first matching entry wins.
 assert.equal(read([{ id: ID + 'x', defaultPage: 'style' }]).defaultPage, 'overview')

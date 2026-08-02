@@ -17,11 +17,20 @@ keystroke away, fully dormant when closed.
   bridges, tunnels, and other common virtual interfaces are excluded so
   their mirrored traffic does not double-count).
 - **Controls** — output volume slider, output/input mute, Do Not Disturb,
-  night light, stay awake, and Bluetooth, plus Capture and Power quick
-  actions that hand off to the Omarchy menu (its own second click confirms
-  destructive power actions).
+  night light, stay awake, Bluetooth, and Game Mode (strip compositor
+  effects via Omarchy's toggle mechanism — shared state with the
+  [community.game-mode](https://github.com/devmobasa/omarchy-game-mode) bar
+  widget), plus Capture and Power quick actions that hand off to the
+  Omarchy menu (its own second click confirms destructive power actions).
 - **Style** — theme and background pickers, delegated to the built-in
   Omarchy selectors.
+- **Settings** — the cog in the tab row: choose which Overview cards show
+  (hide the battery meter on a desktop, drop the media card, and so on)
+  and pick exactly which effects Game Mode strips (animations, blur,
+  shadows, gaps, rounding, tearing). Changes persist immediately to
+  `~/.local/state/omarchy/settings/nexus.json`.
+- **Bar shortcut** — an optional bar widget that toggles the panel and
+  lights up while it is open.
 - **Deterministic media** — one MPRIS adapter with proxy-aware player
   selection (playerctld and browser-integration proxies never shadow the
   real player) and stable ordering, so the shown player never flaps.
@@ -49,7 +58,20 @@ omarchy-shell shell toggle community.omarchy-nexus '{}'
 ```
 
 The payload may name a page directly: `'{"page":"controls"}'` (pages:
-`overview`, `controls`, `style`).
+`overview`, `controls`, `style`, `settings`).
+
+### Bar shortcut
+
+The manifest also ships a bar widget. If it does not appear after
+installing, add it to your bar layout in `~/.config/omarchy/shell.json`:
+
+```json
+{ "bar": { "layout": { "right": [ { "id": "community.omarchy-nexus" } ] } } }
+```
+
+(append the entry to your existing `right` array), then
+`omarchy bar move community.omarchy-nexus <left|center|right>` to
+reposition it.
 
 ### Keybinding
 
@@ -111,7 +133,14 @@ Presence of the entry is what enables the plugin; remove it or run
 | `showMetrics` | `true` | Show the metric arc meters |
 | `showNetwork` | `true` | Show the network throughput sparkline (needs `showMetrics`) |
 | `showFetch` | `true` | Show the hostname · kernel · uptime line |
+| `showCpu` / `showMemory` / `showStorage` / `showBattery` | `true` | Per-meter visibility |
+| `gmAnimations` / `gmBlur` / `gmShadows` / `gmGaps` / `gmRounding` / `gmTearing` | `true` | What Game Mode strips |
 | `preferredMediaIdentity` | `""` | Prefer this player identity (case-insensitive) among active players |
+
+The boolean toggles are also editable interactively on the Settings page
+(the cog); interactive changes are stored in
+`~/.local/state/omarchy/settings/nexus.json` and win over the shell.json
+layer. Nexus never writes shell.json itself.
 
 ## Tests
 

@@ -1,22 +1,36 @@
 // Pure page and payload model for Omarchy Nexus. Loaded by both the QML
 // entry point and the Node test harness, so it must stay dependency-free.
 
-var PAGES = ["overview", "controls", "style"]
+// "settings" is a full page (payloads and Tab cycling reach it) but renders
+// in the tab row as the trailing cog rather than a labelled tab.
+var PAGES = ["overview", "controls", "style", "settings"]
 var DEFAULT_PAGE = "overview"
 
 var PAGE_TITLES = {
   overview: "Overview",
   controls: "Controls",
-  style: "Style"
+  style: "Style",
+  settings: "Settings"
 }
 
 // Pages with real content use the empty string: the panel hides the
-// placeholder row entirely for them. All three pages now have content;
-// future expansion pages can reuse this mechanism.
+// placeholder row entirely for them. All pages now have content; future
+// expansion pages can reuse this mechanism.
 var PAGE_PLACEHOLDERS = {
   overview: "",
   controls: "",
-  style: ""
+  style: "",
+  settings: ""
+}
+
+// The labelled tabs; the settings page is reached via the cog, Tab cycling,
+// or a payload.
+function tabPages() {
+  var tabs = []
+  for (var i = 0; i < PAGES.length; i++) {
+    if (PAGES[i] !== "settings") tabs.push(PAGES[i])
+  }
+  return tabs
 }
 
 // The host delivers the summon payload verbatim (any string, possibly not
@@ -62,6 +76,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     PAGES: PAGES,
     DEFAULT_PAGE: DEFAULT_PAGE,
+    tabPages: tabPages,
     normalizePayload: normalizePayload,
     adjacentPage: adjacentPage,
     pageTitle: pageTitle,

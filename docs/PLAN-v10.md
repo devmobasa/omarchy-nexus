@@ -181,3 +181,39 @@ directional slide + full per-page keyboard reach) and community.game-mode
 0.1.0 (flag-file toggle, IPC surface, its own model/contract suite).
 Live-verified: page cycling, 9-cycle stress with unload proof, game-mode
 on/off round trip with exact option restore (animations, gaps, blur).
+
+## Addendum — v0.3 (settings page, bar shortcut, game mode in Nexus)
+
+Landed on top of v0.2, same stances:
+
+- Fourth page "settings", reached via the trailing cog in the tab row, Tab
+  cycling, or a `{"page":"settings"}` payload. The labelled tab row itself
+  stays three tabs (NexusModel.tabPages()).
+- Interactive settings persist through the house state-file pattern:
+  ~/.local/state/omarchy/settings/nexus.json, written atomically through
+  the tested serializer (parseState/applyState/buildStateJson, literal
+  booleans only, known fields only). The state layer overrides the
+  read-only shell.json entry; Nexus never writes shell.json.
+- Per-card visibility: showCpu/showMemory/showStorage/showBattery join the
+  existing show* settings; the arc meters gate individually (a desktop
+  hides its battery ring from the Settings page).
+- Game mode moved into Nexus as Controls row 7, sharing the exact flag
+  file with community.game-mode (same basename, same toggles directory).
+  The strip set is configurable: NexusGameModeModel.buildFlagContent(gm*)
+  emits only the selected sections and returns null for an empty set, which
+  disables the toggle with a reason. Both controllers watch the flag, so
+  either may toggle and neither goes stale (verified live: the widget reads
+  "on" after a Nexus-initiated enable).
+- Process inventory grew to five (sampler, df, dual-consumer mkdir, rm,
+  hyprctl reload), every one a fixed argument array on user action, with
+  start-failure latches per the v0.2 review lessons.
+- Bar shortcut: the manifest became a panel + bar-widget hybrid;
+  NexusBarWidget.qml drives shell.toggle/isPluginOpen only. Caveat learned
+  live: PluginRegistry.setEnabled skips the bar-layout insert when the
+  plugin already has a plugins[] entry, so an existing install adds the
+  layout entry by hand (documented in the README).
+
+Live-verified: settings page opens, per-card gates react, game mode from
+Nexus round-trips with the widget in sync, the configurable strip honored a
+gmGaps=false state file (flag omitted gaps, kept animations; live options
+confirmed), 6-cycle stress green, no new log warnings.

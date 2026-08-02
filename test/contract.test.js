@@ -10,8 +10,11 @@ function read(relative) {
 const manifest = JSON.parse(read('manifest.json'))
 assert.equal(manifest.schemaVersion, 1)
 assert.equal(manifest.id, 'community.omarchy-nexus')
-assert.deepEqual(manifest.kinds, ['panel'])
+assert.deepEqual(manifest.kinds, ['panel', 'bar-widget'])
 assert.equal(manifest.entryPoints.panel, 'Nexus.qml')
+assert.equal(manifest.entryPoints.barWidget, 'NexusBarWidget.qml')
+assert.equal(manifest.barWidget.defaultSection, 'right')
+assert.equal(manifest.barWidget.allowMultiple, false)
 assert.equal(manifest.keepLoaded, undefined,
   'keepLoaded stays omitted until the summon-latency benchmark demands it')
 assert.equal(manifest.license, 'MIT')
@@ -59,12 +62,23 @@ assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 5,
 assert.equal((nexus.match(/running: root\.opened/g) || []).length, 4,
   'the four recurring timers are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
-assert.doesNotMatch(nexus, /execDetached|hyprctl|bash -c/, 'plugin builds no shell commands')
+assert.doesNotMatch(nexus, /execDetached|bash -c|sh -c/, 'no shell command strings, ever')
 
-// Metrics sampler contract: exactly two whitelisted argument-array commands.
-// The sampler grows files, never processes.
-assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 2,
-  'one proc sampler process and one df process, nothing else')
+// Process inventory: exactly five whitelisted argument-array commands — the
+// two samplers plus the three user-action-only game-mode/settings steps.
+// hyprctl appears exactly once, as the fixed reload command.
+assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 5,
+  'sampler, df, mkdir, rm, and hyprctl reload — nothing else')
+assert.match(nexus, /command: \["mkdir", "-p", root\.gameModeDir, root\.settingsDir\]/,
+  'directory creation is a fixed argument array')
+assert.match(nexus, /command: \["rm", "-f", root\.gameModeFile\]/,
+  'flag removal targets exactly the shared flag file')
+assert.match(nexus, /command: \["hyprctl", "reload"\]/,
+  'the reload is a fixed argument array')
+assert.equal((nexus.match(/command: \[[^\]]*hyprctl[^\]]*\]/g) || []).length, 1,
+  'hyprctl appears in exactly one command, the fixed reload')
+assert.equal((nexus.match(/could not be started/g) || []).length, 4,
+  'every process has a start-failure guard — the dual-consumer mkdir reports to both waiters (Quickshell emits no exited for unstartable commands)')
 assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo", "\/proc\/net\/dev", "\/proc\/uptime"\]/,
   'cpu/mem/net/uptime sampling reads proc files with one argument array')
 assert.match(nexus, /command: \["df", "-P", "-k", "\/"\]/,
@@ -157,14 +171,46 @@ assert.match(nexus, /if \(!opened \|\| pendingActionName !== ""\) return/,
 assert.match(nexus, /service unavailable|No output device|No input device/i,
   'unavailable controls show a reason')
 
-// Settings contract: read-only, validated, reactive.
+// Settings contract: the shell.json layer stays read-only and validated;
+// the Settings page writes only the state file, through the tested
+// serializer, with the writer cache tracking disk.
 assert.match(nexus, /NexusSettingsModel\.readSettings/, 'settings go through the tested reader')
+assert.match(nexus, /NexusSettingsModel\.applyState/, 'the state layer merges through the model')
+assert.match(nexus, /NexusSettingsModel\.parseState/, 'state text parses through the model')
+assert.match(nexus, /NexusSettingsModel\.buildStateJson/, 'state writes serialize through the model')
+assert.match(nexus, /NexusSettingsModel\.statePath/, 'the state file path comes from the model')
+assert.doesNotMatch(nexus, /shellConfig\.plugins\s*=|updateEntryInline/,
+  'Nexus never writes shell.json')
 assert.match(nexus, /normalizePayload\(payloadJson, root\.settings\.defaultPage\)/,
   'defaultPage applies only when the payload names no page')
 assert.match(nexus, /settings\.preferredMediaIdentity, mediaSerials/,
   'media preference flows from validated settings')
 assert.match(nexus, /root\.settings\.showMedia/, 'showMedia gates the media card')
 assert.match(nexus, /root\.settings\.showMetrics/, 'showMetrics gates the metric grid')
+assert.match(nexus, /visible: root\.settings\.showCpu/, 'per-meter visibility is settings-driven')
+assert.match(nexus, /visible: root\.settings\.showBattery/, 'the battery meter can be hidden')
+
+// Game mode inside Nexus: the flag file is shared with community.game-mode,
+// content comes from the configured strip set, and an empty set refuses to
+// toggle instead of writing a flag that strips nothing.
+assert.match(nexus, /NexusGameModeModel\.flagPath/, 'the shared flag path comes from the model')
+assert.match(nexus, /NexusGameModeModel\.buildFlagContent\(settings\)/,
+  'the strip set flows from validated settings')
+assert.match(nexus, /gameModeFlagContent === null/, 'an empty strip set disables the toggle')
+assert.match(nexus, /flagWriter\.reload\(\)/,
+  'the writer cache re-reads disk so a re-enable is never a silent no-op')
+assert.match(nexus, /watchChanges: true/,
+  'external flag/state changes are noticed while open')
+
+// Bar widget: drives only the host toggle surface and tolerates a null bar.
+const widget = read('NexusBarWidget.qml')
+assert.match(widget, /^BarWidget \{/m, 'the bar entry point is the shared BarWidget base')
+assert.match(widget, /isPluginOpen\("community\.omarchy-nexus"\)/,
+  'the active state reads the host open map')
+assert.match(widget, /shellRoot\.toggle\("community\.omarchy-nexus", "\{\}"\)/,
+  'the click goes through the host toggle')
+assert.match(widget, /bar \? bar\.shell : null/, 'a null bar at construction is tolerated')
+assert.doesNotMatch(widget, /\bProcess\s*\{|\bTimer\s*\{/, 'the widget is purely reactive')
 
 // Menu delegation: close first, then open the Omarchy menu in-process.
 assert.match(nexus, /requestClose\(\)\s*\n\s*if \(host && typeof host\.summon === "function"\)/,

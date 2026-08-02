@@ -14,6 +14,7 @@ import "model/NexusModel.js" as NexusModel
 import "model/NexusMediaModel.js" as NexusMediaModel
 import "model/NexusMetricsModel.js" as NexusMetricsModel
 import "model/NexusSettingsModel.js" as NexusSettingsModel
+import "model/NexusGameModeModel.js" as NexusGameModeModel
 
 Item {
   id: root
@@ -33,11 +34,53 @@ Item {
   readonly property bool metricsActive: opened
   readonly property string focusRole: controlCursor >= 0 ? "control" : "tab"
 
-  // ---- validated settings (never written during open) ----------------------
-  readonly property var settings: NexusSettingsModel.readSettings(
-    shell && shell.shellConfig ? shell.shellConfig.plugins : null,
-    manifest && manifest.id ? manifest.id : "community.omarchy-nexus",
-    NexusModel.PAGES)
+  // ---- validated settings ---------------------------------------------------
+  // Two layers: the read-only shell.json entry, overridden by the Settings
+  // page's state file. Nexus never writes shell.json.
+  property var stateOverrides: ({})
+  readonly property var settings: NexusSettingsModel.applyState(
+    NexusSettingsModel.readSettings(
+      shell && shell.shellConfig ? shell.shellConfig.plugins : null,
+      manifest && manifest.id ? manifest.id : "community.omarchy-nexus",
+      NexusModel.PAGES),
+    stateOverrides)
+
+  readonly property string settingsDir: NexusSettingsModel.stateDir(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  readonly property string settingsFile: NexusSettingsModel.statePath(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  property string settingsError: ""
+
+  FileView {
+    path: root.opened ? root.settingsFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.stateOverrides = NexusSettingsModel.parseState(text())
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: stateWriter
+    path: root.settingsFile
+    printErrors: false
+    atomicWrites: true
+    // Re-read after every save so the write-compare cache tracks disk
+    // (setText silently no-ops on identical cached content).
+    onSaved: {
+      root.settingsError = ""
+      reload()
+    }
+    onSaveFailed: root.settingsError = "Could not write the settings file"
+  }
+
+  function updateSetting(key, value) {
+    var next = {}
+    for (var existing in stateOverrides) next[existing] = stateOverrides[existing]
+    next[key] = value === true
+    stateOverrides = next
+    ensureDirsProcess.writeStateAfter = true
+    runProcess(ensureDirsProcess)
+  }
 
   // ---- serialized pending actions ------------------------------------------
   // One control action at a time: the pending window blocks overlapping
@@ -91,6 +134,9 @@ Item {
     root.netTxRate = null
     root.netRxHistory = []
     root.netTxHistory = []
+    root.gameModePending = false
+    root.gameModeError = ""
+    root.settingsError = ""
     closingFromHost = false
   }
 
@@ -226,12 +272,136 @@ Item {
     if (btAdapter) btAdapter.enabled = !(btAdapter.enabled === true)
   }
 
+  // ---- game mode (flag file shared with community.game-mode) ---------------
+  // Presence of the flag in Omarchy's sourced toggles directory is the whole
+  // state; removing it restores the user's exact config. The strip set comes
+  // from the gm* settings, so the Settings page decides what game mode does.
+  readonly property string gameModeDir: NexusGameModeModel.stateDir(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  readonly property string gameModeFile: NexusGameModeModel.flagPath(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  readonly property var gameModeFlagContent: NexusGameModeModel.buildFlagContent(settings)
+  property bool gameModeOn: false
+  property bool gameModePending: false
+  property string gameModeError: ""
+
+  FileView {
+    id: gameModeProbe
+    path: root.opened ? root.gameModeFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.gameModeOn = true
+    onLoadFailed: root.gameModeOn = false
+    onFileChanged: root.syncGameMode()
+  }
+
+  function syncGameMode() {
+    gameModeProbe.reload()
+    // The writer's write-compare cache must track disk (setText de-dupes).
+    flagWriter.reload()
+  }
+
+  // Quickshell emits no `exited` when a binary cannot be started, only
+  // runningChanged — an exit that was never seen is a start failure.
+  function runProcess(proc) {
+    proc.exitSeen = false
+    proc.running = true
+  }
+
+  function toggleGameMode() {
+    if (gameModePending || !opened) return
+    gameModeError = ""
+    if (gameModeOn) {
+      gameModePending = true
+      runProcess(removeFlagProcess)
+    } else {
+      if (gameModeFlagContent === null) {
+        gameModeError = "Nothing selected to strip — pick effects in Settings."
+        return
+      }
+      gameModePending = true
+      ensureDirsProcess.writeFlagAfter = true
+      runProcess(ensureDirsProcess)
+    }
+  }
+
+  function finishGameMode(ok, message) {
+    gameModePending = false
+    gameModeError = ok ? "" : message
+    syncGameMode()
+  }
+
+  // One idempotent dir-ensure serves both writers (game-mode flag and the
+  // settings state file); fixed argument array, fired only on user action.
+  Process {
+    id: ensureDirsProcess
+    property bool exitSeen: false
+    property bool writeFlagAfter: false
+    property bool writeStateAfter: false
+    command: ["mkdir", "-p", root.gameModeDir, root.settingsDir]
+    onRunningChanged: if (!running && !exitSeen) {
+      if (writeFlagAfter) root.finishGameMode(false, "mkdir could not be started")
+      if (writeStateAfter) root.settingsError = "mkdir could not be started"
+      writeFlagAfter = false
+      writeStateAfter = false
+    }
+    onExited: function (exitCode) {
+      exitSeen = true
+      var flagWanted = writeFlagAfter
+      var stateWanted = writeStateAfter
+      writeFlagAfter = false
+      writeStateAfter = false
+      if (exitCode !== 0) {
+        if (flagWanted) root.finishGameMode(false, "could not create the state directories")
+        if (stateWanted) root.settingsError = "Could not create the state directories"
+        return
+      }
+      if (flagWanted) flagWriter.setText(root.gameModeFlagContent)
+      if (stateWanted) stateWriter.setText(NexusSettingsModel.buildStateJson(root.stateOverrides))
+    }
+  }
+
+  FileView {
+    id: flagWriter
+    path: root.gameModeFile
+    printErrors: false
+    atomicWrites: true
+    onSaved: root.runProcess(hyprReloadProcess)
+    onSaveFailed: root.finishGameMode(false, "could not write the flag file")
+  }
+
+  Process {
+    id: removeFlagProcess
+    property bool exitSeen: false
+    command: ["rm", "-f", root.gameModeFile]
+    onRunningChanged: if (!running && !exitSeen)
+      root.finishGameMode(false, "rm could not be started")
+    onExited: function (exitCode) {
+      exitSeen = true
+      if (exitCode === 0) root.runProcess(hyprReloadProcess)
+      else root.finishGameMode(false, "could not remove the flag file")
+    }
+  }
+
+  Process {
+    id: hyprReloadProcess
+    property bool exitSeen: false
+    command: ["hyprctl", "reload"]
+    onRunningChanged: if (!running && !exitSeen)
+      root.finishGameMode(false, "hyprctl could not be started")
+    onExited: function (exitCode) {
+      exitSeen = true
+      root.finishGameMode(exitCode === 0, "hyprctl reload failed")
+    }
+  }
+
   // ---- per-page keyboard cursor --------------------------------------------
   // Every page's actionable rows are keyboard-reachable. Row order:
   //   overview: 0 media transport, 1 seek, 2 player switcher (when > 1);
   //   controls: 0 volume, 1 mute, 2 microphone, 3 dnd, 4 night light,
-  //             5 stay awake, 6 bluetooth, 7 capture, 8 power;
-  //   style:    0 theme, 1 background.
+  //             5 stay awake, 6 bluetooth, 7 game mode, 8 capture, 9 power;
+  //   style:    0 theme, 1 background;
+  //   settings: one row per settingsRows entry.
   // -1 means the tab row owns focus. The cursor resets on page change.
   property int controlCursor: -1
   onPageChanged: controlCursor = -1
@@ -239,13 +409,33 @@ Item {
   // vanished, chip hidden), clamp back into range.
   onLastCursorIndexChanged: if (controlCursor > lastCursorIndex) controlCursor = lastCursorIndex
 
+  // The Settings page's rows, in cursor order. Two sections: what shows on
+  // the panel, and what game mode strips.
+  readonly property var settingsRows: [
+    { key: "showMedia", label: "Media card", desc: "Artwork, transport, and seek bar on Overview." },
+    { key: "showMetrics", label: "Metric meters", desc: "Master switch for the arc meters and network card." },
+    { key: "showCpu", label: "CPU meter", desc: "" },
+    { key: "showMemory", label: "Memory meter", desc: "" },
+    { key: "showStorage", label: "Storage meter", desc: "" },
+    { key: "showBattery", label: "Battery meter", desc: "Hide on desktops without a battery." },
+    { key: "showNetwork", label: "Network card", desc: "Live down/up throughput sparkline." },
+    { key: "showFetch", label: "System info line", desc: "hostname · kernel · uptime under the clock." },
+    { key: "gmAnimations", label: "Animations", desc: "", section: "game" },
+    { key: "gmBlur", label: "Blur", desc: "", section: "game" },
+    { key: "gmShadows", label: "Shadows", desc: "", section: "game" },
+    { key: "gmGaps", label: "Gaps", desc: "", section: "game" },
+    { key: "gmRounding", label: "Rounding", desc: "", section: "game" },
+    { key: "gmTearing", label: "Allow tearing", desc: "Master tearing switch; windowed games may also need an immediate window rule.", section: "game" }
+  ]
+
   readonly property int lastCursorIndex: {
-    if (page === "controls") return 8
+    if (page === "controls") return 9
     if (page === "overview") {
       if (!settings.showMedia || mediaSelected === null) return -1
       return mediaPlayerCount > 1 ? 2 : 1
     }
     if (page === "style") return 1
+    if (page === "settings") return settingsRows.length - 1
     return -1
   }
 
@@ -261,11 +451,15 @@ Item {
       else if (index === 4) dispatchControl("night-light", toggleNightlight)
       else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
       else if (index === 6) dispatchControl("bluetooth", toggleBluetooth)
-      else if (index === 7) openMenuRoute("trigger.capture")
-      else if (index === 8) openMenuRoute("system")
+      else if (index === 7) toggleGameMode()
+      else if (index === 8) openMenuRoute("trigger.capture")
+      else if (index === 9) openMenuRoute("system")
     } else if (page === "style") {
       if (index === 0) openMenuRoute("style.theme")
       else if (index === 1) openMenuRoute("style.background")
+    } else if (page === "settings") {
+      var row = settingsRows[index]
+      if (row) updateSetting(row.key, settings[row.key] !== true)
     }
   }
 
@@ -907,35 +1101,50 @@ Item {
 
           PanelSeparator { foreground: Color.menu.text }
 
-          // ---- page tabs (click or scroll) ---------------------------------
-          Row {
-            spacing: Style.spacing.controlGap
+          // ---- page tabs (click or scroll) with the settings cog -----------
+          Item {
+            width: parent.width
+            height: tabRow.implicitHeight
 
-            WheelHandler {
-              // Touchpads deliver a stream of small deltas (and horizontal
-              // scrolls report y === 0); without the guard and the notch
-              // threshold one flick would spin through several pages.
-              property real wheelAccum: 0
-              onActiveChanged: if (!active) wheelAccum = 0
-              onWheel: function (event) {
-                if (event.angleDelta.y === 0) return
-                wheelAccum += event.angleDelta.y
-                if (Math.abs(wheelAccum) < 120) return
-                var step = wheelAccum < 0 ? 1 : -1
-                wheelAccum = 0
-                root.setPage(NexusModel.adjacentPage(root.page, step))
+            Row {
+              id: tabRow
+              spacing: Style.spacing.controlGap
+
+              WheelHandler {
+                // Touchpads deliver a stream of small deltas (and horizontal
+                // scrolls report y === 0); without the guard and the notch
+                // threshold one flick would spin through several pages.
+                property real wheelAccum: 0
+                onActiveChanged: if (!active) wheelAccum = 0
+                onWheel: function (event) {
+                  if (event.angleDelta.y === 0) return
+                  wheelAccum += event.angleDelta.y
+                  if (Math.abs(wheelAccum) < 120) return
+                  var step = wheelAccum < 0 ? 1 : -1
+                  wheelAccum = 0
+                  root.setPage(NexusModel.adjacentPage(root.page, step))
+                }
+              }
+
+              Repeater {
+                model: NexusModel.tabPages()
+
+                Button {
+                  required property string modelData
+                  text: NexusModel.pageTitle(modelData)
+                  active: root.page === modelData
+                  onClicked: root.setPage(modelData)
+                }
               }
             }
 
-            Repeater {
-              model: NexusModel.PAGES
-
-              Button {
-                required property string modelData
-                text: NexusModel.pageTitle(modelData)
-                active: root.page === modelData
-                onClicked: root.setPage(modelData)
-              }
+            Button {
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰒓"
+              active: root.page === "settings"
+              tooltipText: "Nexus settings"
+              onClicked: root.setPage("settings")
             }
           }
 
@@ -1155,6 +1364,7 @@ Item {
             rowSpacing: Style.spacing.md
 
             ArcMeter {
+              visible: root.settings.showCpu
               width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
               label: "CPU"
               percent: !root.statStale && root.cpuValue !== null ? root.cpuValue : null
@@ -1163,6 +1373,7 @@ Item {
             }
 
             ArcMeter {
+              visible: root.settings.showMemory
               width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
               label: "Memory"
               percent: !root.statStale && root.memValue !== null ? root.memValue : null
@@ -1171,6 +1382,7 @@ Item {
             }
 
             ArcMeter {
+              visible: root.settings.showStorage
               width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
               label: "Storage"
               percent: !root.diskStale && root.diskValue ? root.diskValue.percent : null
@@ -1181,6 +1393,7 @@ Item {
             }
 
             ArcMeter {
+              visible: root.settings.showBattery
               width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
               label: "Battery"
               percent: root.batteryPresent ? root.batteryPercent : null
@@ -1467,6 +1680,30 @@ Item {
                 root.dispatchControl("bluetooth", root.toggleBluetooth)
               }
             }
+
+            Toggle {
+              width: parent.width
+              label: "Game mode"
+              description: root.gameModeError !== ""
+                ? root.gameModeError
+                : (root.gameModePending
+                  ? "Applying…"
+                  : (!root.gameModeOn && root.gameModeFlagContent === null
+                    ? "Nothing selected to strip — pick effects in Settings."
+                    : "Strip compositor effects; configure the set in Settings."))
+              enabled: !root.gameModePending
+                && (root.gameModeOn || root.gameModeFlagContent !== null)
+              checked: root.gameModeOn
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 7 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 7 }
+              onClicked: {
+                root.controlCursor = 7
+                root.toggleGameMode()
+              }
+            }
           }
 
           // ---- controls: capture and power quick actions ------------------
@@ -1477,15 +1714,15 @@ Item {
             Button {
               iconText: ""
               text: "Capture"
-              hasCursor: root.controlCursor === 7 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 7 }
+              hasCursor: root.controlCursor === 8 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 8 }
               onClicked: root.openMenuRoute("trigger.capture")
             }
             Button {
               iconText: "󰐥"
               text: "Power"
-              hasCursor: root.controlCursor === 8 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 8 }
+              hasCursor: root.controlCursor === 9 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 9 }
               onClicked: root.openMenuRoute("system")
             }
           }
@@ -1522,6 +1759,98 @@ Item {
                 onHovered: function (h) { if (h) root.controlCursor = 1 }
                 onClicked: root.openMenuRoute("style.background")
               }
+            }
+          }
+
+          // ---- settings: panel cards and the game-mode strip set -----------
+          Column {
+            visible: root.page === "settings"
+            width: parent.width
+            spacing: Style.space(4)
+
+            Text {
+              width: parent.width
+              text: "Overview cards"
+              color: Qt.darker(Color.menu.text, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
+            Repeater {
+              model: root.settingsRows.filter(function (row) { return row.section !== "game" })
+
+              Toggle {
+                required property var modelData
+                required property int index
+                width: parent.width
+                label: modelData.label
+                description: modelData.desc
+                checked: root.settings[modelData.key] === true
+                foreground: Color.menu.text
+                accent: Color.accent
+                fontFamily: Style.font.family
+                hasCursor: root.controlCursor === index && root.page === "settings"
+                onHovered: function (h) { if (h) root.controlCursor = index }
+                onClicked: {
+                  root.controlCursor = index
+                  root.updateSetting(modelData.key, root.settings[modelData.key] !== true)
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              topPadding: Style.space(8)
+              text: "Game mode strips"
+              color: Qt.darker(Color.menu.text, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
+            Repeater {
+              id: gameRowsRepeater
+              model: root.settingsRows.filter(function (row) { return row.section === "game" })
+              readonly property int indexOffset: root.settingsRows.length - count
+
+              Toggle {
+                required property var modelData
+                required property int index
+                readonly property int cursorIndex: gameRowsRepeater.indexOffset + index
+                width: parent.width
+                label: modelData.label
+                description: modelData.desc
+                checked: root.settings[modelData.key] === true
+                foreground: Color.menu.text
+                accent: Color.accent
+                fontFamily: Style.font.family
+                hasCursor: root.controlCursor === cursorIndex && root.page === "settings"
+                onHovered: function (h) { if (h) root.controlCursor = cursorIndex }
+                onClicked: {
+                  root.controlCursor = cursorIndex
+                  root.updateSetting(modelData.key, root.settings[modelData.key] !== true)
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.settingsError !== ""
+              text: root.settingsError
+              color: Color.urgent
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              text: "Changes save to the Nexus state file immediately; the shell.json entry still works for scripted overrides."
+              color: Qt.darker(Color.menu.text, 1.5)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
           }
 

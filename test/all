@@ -19,5 +19,6 @@ done
 OMARCHY_PATH="$OMARCHY_SOURCE" omarchy plugin validate "$PLUGIN_DIR"
 
 qmllint -I "$OMARCHY_SOURCE/shell" "$PLUGIN_DIR/Nexus.qml"
+qmllint -I "$OMARCHY_SOURCE/shell" "$PLUGIN_DIR/NexusBarWidget.qml"
 
 echo "ok - nexus manifest and QML"
