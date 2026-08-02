@@ -12,6 +12,7 @@
 var CPU_MEM_INTERVAL_MS = 2000
 var DISK_INTERVAL_MS = 30000
 var STALE_FACTOR = 3
+var NET_HISTORY_CAP = 30
 
 // Parse the aggregate "cpu " line of /proc/stat into cumulative tick counters.
 // idle time includes iowait; total is the sum of every column.
@@ -65,10 +66,147 @@ function parseMemInfo(text) {
   }
 }
 
-// The sampler reads /proc/stat and /proc/meminfo in one bounded process; the
-// concatenated output parses as one text.
-function parseStatAndMem(text) {
-  return { cpu: parseCpuSample(text), mem: parseMemInfo(text) }
+// Virtual interfaces that would double-count real traffic (loopback mirrors
+// everything local; tunnels/wireguard mirror the physical link they ride on;
+// container bridges and veth pairs mirror container traffic).
+var VIRTUAL_INTERFACE_PREFIXES = ["lo", "docker", "br-", "veth", "tun", "tap", "virbr", "vnet", "wg"]
+
+function isVirtualInterface(name) {
+  for (var i = 0; i < VIRTUAL_INTERFACE_PREFIXES.length; i++) {
+    var prefix = VIRTUAL_INTERFACE_PREFIXES[i]
+    if (name === prefix || name.indexOf(prefix) === 0) return true
+  }
+  return false
+}
+
+// Parse /proc/net/dev: interface lines are `name: rx_bytes <7 more rx
+// fields> tx_bytes ...` (tx_bytes is the 9th numeric field). Virtual
+// interfaces are excluded so the sum tracks real link traffic; meminfo/stat
+// lines can never match the nine-numeric-field shape.
+function parseNetDev(text) {
+  var lines = String(text == null ? "" : text).split("\n")
+  var rxBytes = 0
+  var txBytes = 0
+  var interfaces = 0
+  for (var i = 0; i < lines.length; i++) {
+    var match = /^\s*([^\s:]+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+\d+/.exec(lines[i])
+    if (!match || isVirtualInterface(match[1])) continue
+    rxBytes += Number(match[2])
+    txBytes += Number(match[3])
+    interfaces += 1
+  }
+  return interfaces > 0 ? { rxBytes: rxBytes, txBytes: txBytes, interfaces: interfaces } : null
+}
+
+// /proc/uptime is the only sampled line of exactly two decimal floats.
+function parseUptime(text) {
+  var match = /^\s*(\d+\.\d+)\s+\d+\.\d+\s*$/m.exec(String(text == null ? "" : text))
+  return match ? Number(match[1]) : null
+}
+
+// The sampler reads /proc/stat, /proc/meminfo, /proc/net/dev and /proc/uptime
+// in one bounded process; the concatenated output parses as one text.
+function parseSample(text) {
+  return {
+    cpu: parseCpuSample(text),
+    mem: parseMemInfo(text),
+    net: parseNetDev(text),
+    uptimeSeconds: parseUptime(text)
+  }
+}
+
+// Bytes/second between two cumulative counter samples; null across counter
+// resets or non-advancing clocks, mirroring cpuPercent's reset rule.
+function rateBetween(prevBytes, prevMs, curBytes, curMs) {
+  if (prevBytes == null || curBytes == null) return null
+  var dtMs = Number(curMs) - Number(prevMs)
+  var delta = Number(curBytes) - Number(prevBytes)
+  if (!isFinite(dtMs) || !isFinite(delta) || dtMs <= 0 || delta < 0) return null
+  return delta * 1000 / dtMs
+}
+
+// Rolling sample window; invalid values record as zero so the timeline keeps
+// its shape instead of silently skipping samples.
+function pushHistory(list, value, cap) {
+  var source = list && typeof list.length === "number" ? list : []
+  var capped = Math.floor(Number(cap))
+  if (!isFinite(capped) || capped < 1) capped = NET_HISTORY_CAP
+  var v = Number(value)
+  var next = source.concat([isFinite(v) && v >= 0 ? v : 0])
+  return next.length > capped ? next.slice(next.length - capped) : next
+}
+
+function historyMax(a, b) {
+  var max = 0
+  var lists = [a, b]
+  for (var l = 0; l < lists.length; l++) {
+    var list = lists[l] && typeof lists[l].length === "number" ? lists[l] : []
+    for (var i = 0; i < list.length; i++) {
+      var value = Number(list[i])
+      if (isFinite(value) && value > max) max = value
+    }
+  }
+  return max
+}
+
+// Normalised polyline points for a declarative Shapes path; fewer than two
+// samples draw nothing rather than a misleading dot or flat line.
+function sparklinePoints(history, width, height, sharedMax) {
+  var list = history && typeof history.length === "number" ? history : []
+  var w = Number(width)
+  var h = Number(height)
+  if (list.length < 2 || !isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) return []
+  var max = Number(sharedMax)
+  if (!isFinite(max) || max <= 0) max = 1
+  var points = []
+  for (var i = 0; i < list.length; i++) {
+    var value = Number(list[i])
+    if (!isFinite(value) || value < 0) value = 0
+    points.push({
+      x: (i / (list.length - 1)) * w,
+      y: h - Math.min(1, value / max) * h
+    })
+  }
+  return points
+}
+
+function formatRate(bytesPerSec) {
+  if (bytesPerSec == null) return "—"
+  var rate = Number(bytesPerSec)
+  if (!isFinite(rate) || rate < 0) return "—"
+  if (rate < 1024) return Math.round(rate) + " B/s"
+  if (rate < 1024 * 1024) return (rate / 1024).toFixed(1) + " KiB/s"
+  if (rate < 1024 * 1024 * 1024) return (rate / (1024 * 1024)).toFixed(1) + " MiB/s"
+  return (rate / (1024 * 1024 * 1024)).toFixed(2) + " GiB/s"
+}
+
+// At most two units, largest first: "3 d 4 h", "2 h 13 m", "45 m", "<1 m".
+// Minutes are dropped once days show, matching how people read uptimes.
+function formatDuration(seconds) {
+  var s = Number(seconds)
+  if (!isFinite(s) || s <= 0) return ""
+  var minutes = Math.floor(s / 60)
+  var days = Math.floor(minutes / (60 * 24))
+  var hours = Math.floor((minutes % (60 * 24)) / 60)
+  var mins = minutes % 60
+  var parts = []
+  if (days > 0) parts.push(days + " d")
+  if (hours > 0) parts.push(hours + " h")
+  if (days === 0 && mins > 0) parts.push(mins + " m")
+  if (parts.length === 0) return "<1 m"
+  return parts.slice(0, 2).join(" ")
+}
+
+// hostname · kernel · up 3 d 4 h — missing parts drop out silently.
+function fetchLine(host, kernel, uptimeSeconds) {
+  var parts = []
+  var h = String(host == null ? "" : host).trim()
+  var k = String(kernel == null ? "" : kernel).trim()
+  if (h) parts.push(h)
+  if (k) parts.push(k)
+  var up = formatDuration(uptimeSeconds)
+  if (up) parts.push("up " + up)
+  return parts.join(" · ")
 }
 
 // Parse `df -P -k <mount>` (POSIX format): the second line is
@@ -98,11 +236,18 @@ function isStale(sampledAtMs, nowMs, intervalMs) {
 }
 
 // Battery detail line from reactive UPower state; presence decides between a
-// reading and the normal desktop no-battery fallback.
-function batteryDetail(present, onBattery, percent) {
+// reading and the normal desktop no-battery fallback. Time estimates are
+// optional — UPower reports 0 when it does not know, which renders as the
+// bare state rather than a fake countdown.
+function batteryDetail(present, onBattery, percent, timeToEmptySec, timeToFullSec) {
   if (!present) return "No battery"
-  if (!onBattery) return Number(percent) >= 100 ? "Charged" : "Charging"
-  return "On battery"
+  if (!onBattery) {
+    if (Number(percent) >= 100) return "Charged"
+    var toFull = formatDuration(timeToFullSec)
+    return toFull ? "Charging — " + toFull + " to full" : "Charging"
+  }
+  var left = formatDuration(timeToEmptySec)
+  return left ? "On battery — " + left + " left" : "On battery"
 }
 
 function clampPercent(value01) {
@@ -116,10 +261,22 @@ if (typeof module !== "undefined") {
     CPU_MEM_INTERVAL_MS: CPU_MEM_INTERVAL_MS,
     DISK_INTERVAL_MS: DISK_INTERVAL_MS,
     STALE_FACTOR: STALE_FACTOR,
+    NET_HISTORY_CAP: NET_HISTORY_CAP,
+    VIRTUAL_INTERFACE_PREFIXES: VIRTUAL_INTERFACE_PREFIXES,
+    isVirtualInterface: isVirtualInterface,
     parseCpuSample: parseCpuSample,
     cpuPercent: cpuPercent,
     parseMemInfo: parseMemInfo,
-    parseStatAndMem: parseStatAndMem,
+    parseNetDev: parseNetDev,
+    parseUptime: parseUptime,
+    parseSample: parseSample,
+    rateBetween: rateBetween,
+    pushHistory: pushHistory,
+    historyMax: historyMax,
+    sparklinePoints: sparklinePoints,
+    formatRate: formatRate,
+    formatDuration: formatDuration,
+    fetchLine: fetchLine,
     parseDiskFree: parseDiskFree,
     formatGib: formatGib,
     isStale: isStale,

@@ -81,8 +81,16 @@ Item {
     root.opened = false
     root.targetScreen = null
     root.mediaSelected = null
+    root.mediaOverrideKey = ""
+    root.mediaPlayerCount = 0
+    root.seekDragging = false
     root.controlCursor = -1
     root.pendingActionName = ""
+    root.netPrevSample = null
+    root.netRxRate = null
+    root.netTxRate = null
+    root.netRxHistory = []
+    root.netTxHistory = []
     closingFromHost = false
   }
 
@@ -218,20 +226,67 @@ Item {
     if (btAdapter) btAdapter.enabled = !(btAdapter.enabled === true)
   }
 
-  // ---- controls keyboard cursor --------------------------------------------
-  // Row order: 0 volume, 1 mute, 2 microphone, 3 dnd, 4 night light,
-  // 5 stay awake, 6 bluetooth. -1 means the tab row owns focus.
+  // ---- per-page keyboard cursor --------------------------------------------
+  // Every page's actionable rows are keyboard-reachable. Row order:
+  //   overview: 0 media transport, 1 seek, 2 player switcher (when > 1);
+  //   controls: 0 volume, 1 mute, 2 microphone, 3 dnd, 4 night light,
+  //             5 stay awake, 6 bluetooth, 7 capture, 8 power;
+  //   style:    0 theme, 1 background.
+  // -1 means the tab row owns focus. The cursor resets on page change.
   property int controlCursor: -1
-  readonly property int lastControlIndex: 6
   onPageChanged: controlCursor = -1
 
+  readonly property int lastCursorIndex: {
+    if (page === "controls") return 8
+    if (page === "overview") {
+      if (!settings.showMedia || mediaSelected === null) return -1
+      return mediaPlayerCount > 1 ? 2 : 1
+    }
+    if (page === "style") return 1
+    return -1
+  }
+
   function activateControl(index) {
-    if (index === 1) dispatchControl("mute-output", toggleOutputMute)
-    else if (index === 2) dispatchControl("mute-microphone", toggleInputMute)
-    else if (index === 3) dispatchControl("dnd", toggleDnd)
-    else if (index === 4) dispatchControl("night-light", toggleNightlight)
-    else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
-    else if (index === 6) dispatchControl("bluetooth", toggleBluetooth)
+    if (page === "overview") {
+      if (index === 0) mediaAction("playpause")
+      else if (index === 2) cycleMediaPlayer()
+    } else if (page === "controls") {
+      if (index === 0) dispatchControl("mute-output", toggleOutputMute)
+      else if (index === 1) dispatchControl("mute-output", toggleOutputMute)
+      else if (index === 2) dispatchControl("mute-microphone", toggleInputMute)
+      else if (index === 3) dispatchControl("dnd", toggleDnd)
+      else if (index === 4) dispatchControl("night-light", toggleNightlight)
+      else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
+      else if (index === 6) dispatchControl("bluetooth", toggleBluetooth)
+      else if (index === 7) openMenuRoute("trigger.capture")
+      else if (index === 8) openMenuRoute("system")
+    } else if (page === "style") {
+      if (index === 0) openMenuRoute("style.theme")
+      else if (index === 1) openMenuRoute("style.background")
+    }
+  }
+
+  // ---- directional page slide ----------------------------------------------
+  // The page content slides in from the direction of travel. Direction comes
+  // from the same adjacency model the keyboard uses, so wrapping moves feel
+  // continuous instead of jumping the long way.
+  property real pageShift: 0
+  NumberAnimation {
+    id: pageSlideAnim
+    target: root
+    property: "pageShift"
+    to: 0
+    duration: 160
+    easing.type: Easing.OutCubic
+  }
+
+  function setPage(next) {
+    if (next === page || NexusModel.PAGES.indexOf(next) === -1) return
+    var forward = NexusModel.adjacentPage(page, 1) === next
+    pageSlideAnim.stop()
+    pageShift = forward ? 1 : -1
+    page = next
+    pageSlideAnim.restart()
   }
 
   // ---- menu delegation -----------------------------------------------------
@@ -255,6 +310,21 @@ Item {
   property var mediaSerials: ({})
   property int mediaLastSerial: 0
   property var mediaSelected: null
+  // Manual player choice from the switcher chip; wins while that player
+  // exists, cleared on close. Count drives the chip's visibility.
+  property string mediaOverrideKey: ""
+  property int mediaPlayerCount: 0
+  // Seek preview while dragging, so the bar tracks the pointer instead of
+  // the (as yet unmoved) player position.
+  property bool seekDragging: false
+  property real seekPreviewFraction: 0
+
+  // The player's usable track length: only a supported, positive length may
+  // drive the seek bar (an unsupported length mirrors position and would pin
+  // the bar to 100%).
+  readonly property real mediaUsableLength: mediaSelected
+    && mediaSelected.lengthSupported && mediaSelected.length > 0
+    ? mediaSelected.length : 0
 
   function playbackStateOf(player) {
     if (player.playbackState === MprisPlaybackState.Playing) return "playing"
@@ -287,7 +357,9 @@ Item {
     var activity = NexusMediaModel.reconcileActivity(mediaSerials, recordsList, mediaLastSerial)
     mediaSerials = activity.serials
     mediaLastSerial = activity.lastSerial
-    var chosen = NexusMediaModel.selectPlayer(recordsList, settings.preferredMediaIdentity, mediaSerials)
+    mediaPlayerCount = NexusMediaModel.countPlayers(recordsList)
+    var chosen = NexusMediaModel.selectPlayer(
+      recordsList, settings.preferredMediaIdentity, mediaSerials, mediaOverrideKey)
     var next = null
     if (chosen) {
       for (var j = 0; j < players.length; j++) {
@@ -298,6 +370,50 @@ Item {
       }
     }
     mediaSelected = next
+  }
+
+  // Chip action: step to the next player in the deterministic order and pin
+  // it as the manual override.
+  function cycleMediaPlayer() {
+    var players = mprisPlayers
+    var recordsList = []
+    for (var i = 0; i < players.length; i++) {
+      if (players[i]) recordsList.push(mediaRecordOf(players[i]))
+    }
+    var currentKey = mediaSelected ? mediaRecordOf(mediaSelected).sourceKey : ""
+    var nextKey = NexusMediaModel.cyclePlayer(
+      recordsList, currentKey, settings.preferredMediaIdentity, mediaSerials)
+    if (nextKey === "") return
+    mediaOverrideKey = nextKey
+    refreshMedia()
+  }
+
+  // Seek paths per the verified Quickshell contract: an absolute position
+  // write needs canSeek AND positionSupported; the relative seek() needs only
+  // canSeek. clampSeek returns null rather than letting a blind seek through.
+  function applySeekFraction(fraction) {
+    var player = mediaSelected
+    if (!player) return
+    var target = NexusMediaModel.clampSeek(
+      fraction, mediaUsableLength, player.canSeek && player.positionSupported)
+    if (target === null) return
+    player.position = target
+  }
+
+  function seekBy(offsetSeconds) {
+    var player = mediaSelected
+    if (player && player.canSeek) player.seek(offsetSeconds)
+  }
+
+  // MPRIS position does not tick on its own; emitting positionChanged() once
+  // a second re-reads the locally extrapolated value (no D-Bus traffic).
+  // Runs only while the panel is open, a player is selected, and playing.
+  Timer {
+    running: root.opened && root.mediaSelected !== null && root.mediaSelected.isPlaying
+    interval: 1000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: if (root.mediaSelected) root.mediaSelected.positionChanged()
   }
 
   // Actions route only to the selected representative and only when it
@@ -354,20 +470,62 @@ Item {
   property double statSampledAt: 0
   property double diskSampledAt: 0
 
+  // Network throughput shares the same single sampler process; rates derive
+  // from cumulative counter deltas, histories feed the sparkline.
+  property var netPrevSample: null
+  property var netRxRate: null
+  property var netTxRate: null
+  property var netRxHistory: []
+  property var netTxHistory: []
+  property var uptimeSeconds: null
+
+  // Static system facts for the fetch row: one-shot async reads while open,
+  // following the shell's FileView house pattern (never blocking).
+  property string hostName: ""
+  property string kernelVersion: ""
+
+  FileView {
+    path: root.opened ? "/proc/sys/kernel/hostname" : ""
+    printErrors: false
+    onLoaded: root.hostName = text().trim()
+  }
+
+  FileView {
+    path: root.opened ? "/proc/sys/kernel/osrelease" : ""
+    printErrors: false
+    onLoaded: root.kernelVersion = text().trim()
+  }
+
   Process {
     id: statProcess
-    command: ["cat", "/proc/stat", "/proc/meminfo"]
+    command: ["cat", "/proc/stat", "/proc/meminfo", "/proc/net/dev", "/proc/uptime"]
 
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var parsed = NexusMetricsModel.parseStatAndMem(text)
+        var parsed = NexusMetricsModel.parseSample(text)
+        var nowMs = Date.now()
         if (parsed.cpu) {
           root.cpuValue = NexusMetricsModel.cpuPercent(root.cpuPrevSample, parsed.cpu)
           root.cpuPrevSample = parsed.cpu
         }
         if (parsed.mem) root.memValue = parsed.mem.percent
-        if (parsed.cpu || parsed.mem) root.statSampledAt = Date.now()
+        if (parsed.uptimeSeconds !== null) root.uptimeSeconds = parsed.uptimeSeconds
+        if (parsed.net) {
+          var prev = root.netPrevSample
+          root.netRxRate = NexusMetricsModel.rateBetween(
+            prev ? prev.rxBytes : null, prev ? prev.atMs : 0, parsed.net.rxBytes, nowMs)
+          root.netTxRate = NexusMetricsModel.rateBetween(
+            prev ? prev.txBytes : null, prev ? prev.atMs : 0, parsed.net.txBytes, nowMs)
+          root.netPrevSample = { rxBytes: parsed.net.rxBytes, txBytes: parsed.net.txBytes, atMs: nowMs }
+          if (root.netRxRate !== null || root.netTxRate !== null) {
+            root.netRxHistory = NexusMetricsModel.pushHistory(
+              root.netRxHistory, root.netRxRate, NexusMetricsModel.NET_HISTORY_CAP)
+            root.netTxHistory = NexusMetricsModel.pushHistory(
+              root.netTxHistory, root.netTxRate, NexusMetricsModel.NET_HISTORY_CAP)
+          }
+        }
+        if (parsed.cpu || parsed.mem) root.statSampledAt = nowMs
       }
     }
   }
@@ -440,7 +598,9 @@ Item {
         label: "Battery",
         percent: batteryPresent ? batteryPercent : null,
         stale: false,
-        detail: NexusMetricsModel.batteryDetail(batteryPresent, UPower.onBattery, batteryPercent)
+        detail: NexusMetricsModel.batteryDetail(batteryPresent, UPower.onBattery, batteryPercent,
+          batteryDevice ? batteryDevice.timeToEmpty : 0,
+          batteryDevice ? batteryDevice.timeToFull : 0)
       }
     ]
   }
@@ -629,30 +789,38 @@ Item {
         anchors.leftMargin: card.contentLeftInset
         focus: true
 
+        // Left/Right acts on the focused row when the row can use it (volume,
+        // transport, seek), otherwise it cycles pages. Tab always cycles.
         Keys.onPressed: function (event) {
-          var onControls = root.page === "controls"
           if (event.key === Qt.Key_Escape) {
             root.requestClose()
             event.accepted = true
-          } else if (event.key === Qt.Key_Down && onControls) {
-            root.controlCursor = Math.min(root.controlCursor + 1, root.lastControlIndex)
+          } else if (event.key === Qt.Key_Down && root.lastCursorIndex >= 0) {
+            root.controlCursor = Math.min(root.controlCursor + 1, root.lastCursorIndex)
             event.accepted = true
-          } else if (event.key === Qt.Key_Up && onControls && root.controlCursor >= 0) {
+          } else if (event.key === Qt.Key_Up && root.controlCursor >= 0) {
             root.controlCursor = root.controlCursor - 1
             event.accepted = true
           } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter
-              || event.key === Qt.Key_Space) && onControls && root.controlCursor >= 0) {
+              || event.key === Qt.Key_Space) && root.controlCursor >= 0) {
             root.activateControl(root.controlCursor)
             event.accepted = true
-          } else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right)
-              && onControls && root.controlCursor === 0) {
-            root.setOutputVolume(root.outputVolume + (event.key === Qt.Key_Left ? -0.05 : 0.05))
+          } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+            var forward = event.key === Qt.Key_Right
+            if (root.page === "controls" && root.controlCursor === 0)
+              root.setOutputVolume(root.outputVolume + (forward ? 0.05 : -0.05))
+            else if (root.page === "overview" && root.controlCursor === 0)
+              root.mediaAction(forward ? "next" : "previous")
+            else if (root.page === "overview" && root.controlCursor === 1)
+              root.seekBy(forward ? 5 : -5)
+            else
+              root.setPage(NexusModel.adjacentPage(root.page, forward ? 1 : -1))
             event.accepted = true
-          } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
-            root.page = NexusModel.adjacentPage(root.page, -1)
+          } else if (event.key === Qt.Key_Backtab) {
+            root.setPage(NexusModel.adjacentPage(root.page, -1))
             event.accepted = true
-          } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
-            root.page = NexusModel.adjacentPage(root.page, 1)
+          } else if (event.key === Qt.Key_Tab) {
+            root.setPage(NexusModel.adjacentPage(root.page, 1))
             event.accepted = true
           }
         }
@@ -742,11 +910,28 @@ Item {
             }
           }
 
+          // ---- fetch row: quiet system facts ------------------------------
+          Text {
+            width: parent.width
+            visible: root.settings.showFetch && text.length > 0
+            text: NexusMetricsModel.fetchLine(root.hostName, root.kernelVersion, root.uptimeSeconds)
+            color: Qt.darker(Color.menu.text, 1.5)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+
           PanelSeparator { foreground: Color.menu.text }
 
-          // ---- page tabs ---------------------------------------------------
+          // ---- page tabs (click or scroll) ---------------------------------
           Row {
             spacing: Style.spacing.controlGap
+
+            WheelHandler {
+              onWheel: function (event) {
+                root.setPage(NexusModel.adjacentPage(root.page, event.angleDelta.y < 0 ? 1 : -1))
+              }
+            }
 
             Repeater {
               model: NexusModel.PAGES
@@ -755,76 +940,208 @@ Item {
                 required property string modelData
                 text: NexusModel.pageTitle(modelData)
                 active: root.page === modelData
-                onClicked: root.page = modelData
+                onClicked: root.setPage(modelData)
               }
             }
           }
+
+          // ---- page content (slides in from the direction of travel) -------
+          Column {
+            width: parent.width
+            spacing: Style.spacing.md
+            opacity: 1 - Math.abs(root.pageShift) * 0.5
+            transform: Translate { x: root.pageShift * Style.space(20) }
 
           // ---- overview: media card ---------------------------------------
           BorderSurface {
             visible: root.page === "overview" && root.settings.showMedia
             width: parent.width
-            implicitHeight: mediaRow.implicitHeight + Style.spacing.rowPaddingX * 2
+            implicitHeight: mediaColumn.implicitHeight + Style.spacing.rowPaddingX * 2
             radius: Style.cornerRadius
             color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
             borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
 
-            Row {
-              id: mediaRow
+            Column {
+              id: mediaColumn
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               anchors.leftMargin: Style.space(12)
               anchors.rightMargin: Style.space(12)
-              spacing: Style.space(12)
+              spacing: Style.space(6)
 
-              Column {
-                width: parent.width - controlsRow.width - Style.space(12)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(2)
+              Row {
+                id: mediaRow
+                width: parent.width
+                spacing: Style.space(12)
 
-                Text {
-                  width: parent.width
-                  text: root.mediaSelected
-                    ? (root.mediaSelected.trackTitle || root.mediaSelected.identity || "Unknown track")
-                    : "Nothing playing"
-                  color: Color.menu.text
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.body
-                  elide: Text.ElideRight
+                Column {
+                  width: parent.width - controlsRow.width - Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(2)
+
+                  Text {
+                    width: parent.width
+                    text: root.mediaSelected
+                      ? (root.mediaSelected.trackTitle || root.mediaSelected.identity || "Unknown track")
+                      : "Nothing playing"
+                    color: Color.menu.text
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.body
+                    elide: Text.ElideRight
+                  }
+                  Text {
+                    width: parent.width
+                    visible: text.length > 0
+                    text: root.mediaSelected ? (root.mediaSelected.trackArtist || "") : ""
+                    color: Qt.darker(Color.menu.text, 1.4)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
                 }
-                Text {
-                  width: parent.width
-                  visible: text.length > 0
-                  text: root.mediaSelected ? (root.mediaSelected.trackArtist || "") : ""
-                  color: Qt.darker(Color.menu.text, 1.4)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
+
+                Row {
+                  id: controlsRow
+                  spacing: Style.spacing.controlGap
+                  anchors.verticalCenter: parent.verticalCenter
+
+                  Button {
+                    iconText: "󰒮"
+                    enabled: root.mediaSelected !== null && root.mediaSelected.canGoPrevious
+                    onHovered: function (h) { if (h) root.controlCursor = 0 }
+                    onClicked: root.mediaAction("previous")
+                  }
+                  Button {
+                    iconText: root.mediaSelected && root.mediaSelected.isPlaying ? "󰏤" : "󰐊"
+                    enabled: root.mediaSelected !== null
+                      && (root.mediaSelected.isPlaying ? root.mediaSelected.canPause : root.mediaSelected.canPlay)
+                    hasCursor: root.controlCursor === 0 && root.page === "overview"
+                    onHovered: function (h) { if (h) root.controlCursor = 0 }
+                    onClicked: root.mediaAction("playpause")
+                  }
+                  Button {
+                    iconText: "󰒭"
+                    enabled: root.mediaSelected !== null && root.mediaSelected.canGoNext
+                    onHovered: function (h) { if (h) root.controlCursor = 0 }
+                    onClicked: root.mediaAction("next")
+                  }
                 }
               }
 
+              // Seek bar: elapsed, draggable track, total. Display-only when
+              // the player reports no usable length or cannot seek.
               Row {
-                id: controlsRow
-                spacing: Style.spacing.controlGap
-                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                visible: root.mediaSelected !== null
+                spacing: Style.space(8)
 
-                Button {
-                  iconText: "󰒮"
-                  enabled: root.mediaSelected !== null && root.mediaSelected.canGoPrevious
-                  onClicked: root.mediaAction("previous")
+                readonly property real barFraction: {
+                  if (root.seekDragging) return root.seekPreviewFraction
+                  if (!root.mediaSelected || root.mediaUsableLength <= 0) return 0
+                  var fraction = NexusMediaModel.positionFraction(
+                    root.mediaSelected.position, root.mediaUsableLength)
+                  return fraction === null ? 0 : fraction
                 }
-                Button {
-                  iconText: root.mediaSelected && root.mediaSelected.isPlaying ? "󰏤" : "󰐊"
-                  enabled: root.mediaSelected !== null
-                    && (root.mediaSelected.isPlaying ? root.mediaSelected.canPause : root.mediaSelected.canPlay)
-                  onClicked: root.mediaAction("playpause")
+                readonly property bool seekable: root.mediaSelected !== null
+                  && root.mediaSelected.canSeek && root.mediaSelected.positionSupported
+                  && root.mediaUsableLength > 0
+
+                Text {
+                  id: elapsedLabel
+                  text: root.mediaSelected
+                    ? NexusMediaModel.formatPlaybackTime(root.seekDragging
+                        ? root.seekPreviewFraction * root.mediaUsableLength
+                        : root.mediaSelected.position)
+                    : ""
+                  color: Qt.darker(Color.menu.text, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
                 }
-                Button {
-                  iconText: "󰒭"
-                  enabled: root.mediaSelected !== null && root.mediaSelected.canGoNext
-                  onClicked: root.mediaAction("next")
+
+                Item {
+                  id: seekTrack
+                  width: parent.width - elapsedLabel.width - totalLabel.width - Style.space(16)
+                  height: Style.space(16)
+                  anchors.verticalCenter: parent.verticalCenter
+
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: Style.space(3)
+                    radius: height / 2
+                    color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.14)
+                  }
+
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width * parent.parent.barFraction
+                    height: Style.space(3)
+                    radius: height / 2
+                    color: root.controlCursor === 1 && root.page === "overview"
+                      ? Color.accent : Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.75)
+                  }
+
+                  Rectangle {
+                    visible: parent.parent.seekable
+                      && (seekMouse.containsMouse || root.seekDragging
+                          || (root.controlCursor === 1 && root.page === "overview"))
+                    x: parent.width * parent.parent.barFraction - width / 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(10)
+                    height: Style.space(10)
+                    radius: width / 2
+                    color: Color.accent
+                  }
+
+                  MouseArea {
+                    id: seekMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: parent.parent.seekable
+                    onEntered: root.controlCursor = 1
+                    onPressed: function (mouse) {
+                      root.seekDragging = true
+                      root.seekPreviewFraction = Math.max(0, Math.min(1, mouse.x / width))
+                    }
+                    onPositionChanged: function (mouse) {
+                      if (root.seekDragging)
+                        root.seekPreviewFraction = Math.max(0, Math.min(1, mouse.x / width))
+                    }
+                    onReleased: {
+                      if (!root.seekDragging) return
+                      root.seekDragging = false
+                      root.applySeekFraction(root.seekPreviewFraction)
+                    }
+                    onCanceled: root.seekDragging = false
+                  }
                 }
+
+                Text {
+                  id: totalLabel
+                  text: root.mediaUsableLength > 0
+                    ? NexusMediaModel.formatPlaybackTime(root.mediaUsableLength) : "─"
+                  color: Qt.darker(Color.menu.text, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              // Player switcher chip: visible only when more than one real
+              // player is active; click or Enter steps the deterministic order.
+              Button {
+                visible: root.mediaPlayerCount > 1
+                iconText: "󰲸"
+                text: root.mediaSelected
+                  ? (root.mediaSelected.identity || root.mediaSelected.dbusName || "Player")
+                  : ""
+                fontSize: Style.font.bodySmall
+                hasCursor: root.controlCursor === 2 && root.page === "overview"
+                tooltipText: "Switch player (" + root.mediaPlayerCount + " active)"
+                onHovered: function (h) { if (h) root.controlCursor = 2 }
+                onClicked: root.cycleMediaPlayer()
               }
             }
           }
@@ -847,6 +1164,118 @@ Item {
                 percent: modelData.percent
                 stale: modelData.stale
                 detail: modelData.detail
+              }
+            }
+          }
+
+          // ---- overview: network throughput -------------------------------
+          BorderSurface {
+            id: netCard
+            visible: root.page === "overview" && root.settings.showMetrics && root.settings.showNetwork
+            width: parent.width
+            implicitHeight: netColumn.implicitHeight + Style.spacing.rowPaddingX * 2
+            radius: Style.cornerRadius
+            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
+            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+
+            readonly property bool netStale: NexusMetricsModel.isStale(
+              root.statSampledAt, root.now.getTime(), NexusMetricsModel.CPU_MEM_INTERVAL_MS)
+            readonly property real netSharedMax: Math.max(
+              NexusMetricsModel.historyMax(root.netRxHistory, root.netTxHistory), 1)
+
+            function polylineFor(history, w, h) {
+              var normalized = NexusMetricsModel.sparklinePoints(history, w, h, netSharedMax)
+              var points = []
+              for (var i = 0; i < normalized.length; i++)
+                points.push(Qt.point(normalized[i].x, normalized[i].y))
+              return points
+            }
+
+            Column {
+              id: netColumn
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(12)
+              spacing: Style.space(6)
+
+              Item {
+                width: parent.width
+                height: netTitle.implicitHeight
+
+                Text {
+                  id: netTitle
+                  anchors.left: parent.left
+                  text: "Network"
+                  color: Color.menu.text
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                }
+
+                Row {
+                  anchors.right: parent.right
+                  spacing: Style.space(10)
+
+                  Text {
+                    text: "󰇚 " + (netCard.netStale ? "—" : NexusMetricsModel.formatRate(root.netRxRate))
+                    color: netCard.netStale ? Qt.darker(Color.menu.text, 1.6) : Color.accent
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Text {
+                    text: "󰕒 " + (netCard.netStale ? "—" : NexusMetricsModel.formatRate(root.netTxRate))
+                    color: Qt.darker(Color.menu.text, netCard.netStale ? 1.6 : 1.2)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+              }
+
+              Item {
+                id: netSparkline
+                width: parent.width
+                height: Style.space(48)
+
+                Text {
+                  anchors.centerIn: parent
+                  visible: root.netRxHistory.length < 2
+                  text: "Sampling…"
+                  color: Qt.darker(Color.menu.text, 1.5)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                Shape {
+                  anchors.fill: parent
+                  visible: root.netRxHistory.length >= 2
+
+                  ShapePath {
+                    strokeWidth: 2
+                    strokeColor: Qt.darker(Color.menu.text, 1.35)
+                    fillColor: "transparent"
+                    capStyle: ShapePath.RoundCap
+                    joinStyle: ShapePath.RoundJoin
+
+                    PathPolyline {
+                      path: netCard.polylineFor(root.netTxHistory, netSparkline.width, netSparkline.height)
+                    }
+                  }
+
+                  ShapePath {
+                    strokeWidth: 2
+                    strokeColor: Color.accent
+                    fillColor: "transparent"
+                    capStyle: ShapePath.RoundCap
+                    joinStyle: ShapePath.RoundJoin
+
+                    PathPolyline {
+                      path: netCard.polylineFor(root.netRxHistory, netSparkline.width, netSparkline.height)
+                    }
+                  }
+                }
               }
             }
           }
@@ -1022,11 +1451,15 @@ Item {
             Button {
               iconText: ""
               text: "Capture"
+              hasCursor: root.controlCursor === 7 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 7 }
               onClicked: root.openMenuRoute("trigger.capture")
             }
             Button {
               iconText: "󰐥"
               text: "Power"
+              hasCursor: root.controlCursor === 8 && root.page === "controls"
+              onHovered: function (h) { if (h) root.controlCursor = 8 }
               onClicked: root.openMenuRoute("system")
             }
           }
@@ -1052,11 +1485,15 @@ Item {
               Button {
                 iconText: "󰸌"
                 text: "Theme"
+                hasCursor: root.controlCursor === 0 && root.page === "style"
+                onHovered: function (h) { if (h) root.controlCursor = 0 }
                 onClicked: root.openMenuRoute("style.theme")
               }
               Button {
                 iconText: ""
                 text: "Background"
+                hasCursor: root.controlCursor === 1 && root.page === "style"
+                onHovered: function (h) { if (h) root.controlCursor = 1 }
                 onClicked: root.openMenuRoute("style.background")
               }
             }
@@ -1071,6 +1508,7 @@ Item {
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
+          }
           }
           }
         }

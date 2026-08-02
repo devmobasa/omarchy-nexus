@@ -56,6 +56,7 @@ function buildRecord(raw) {
 
   return {
     busName: busName,
+    identity: String(raw && raw.identity || "").trim(),
     identityKey: identityKey,
     sourceKey: sourceKey,
     isProxy: !!(alias && (alias.isProxy || alias.drop)),
@@ -137,8 +138,9 @@ function compareRepresentatives(a, b, preferredIdentity, serials) {
 // Phase 1: group by exact sourceKey and pick one representative per group.
 // Real records discard every proxy in their group; a proxy can represent only
 // a proxy-only group, so a vanished real player lets its proxy promote.
-function selectPlayer(records, preferredMediaIdentity, serials) {
-  var preferred = normalizeIdentity(preferredMediaIdentity)
+// Phase 2: one total order across representatives. Selection and the player
+// cycle both consume this list, so they can never disagree about ordering.
+function orderedRepresentatives(records, preferred, serials) {
   var groups = {}
   var groupOrder = []
   for (var i = 0; i < records.length; i++) {
@@ -165,11 +167,74 @@ function selectPlayer(records, preferredMediaIdentity, serials) {
     representatives.push(candidates[0])
   }
 
-  if (representatives.length === 0) return null
   representatives.sort(function (a, b) {
     return compareRepresentatives(a, b, preferred, serials)
   })
+  return representatives
+}
+
+// A manual override (sourceKey) wins while that player still exists, then
+// selection falls back to the deterministic order.
+function selectPlayer(records, preferredMediaIdentity, serials, overrideKey) {
+  var preferred = normalizeIdentity(preferredMediaIdentity)
+  var representatives = orderedRepresentatives(records, preferred, serials)
+  if (representatives.length === 0) return null
+  if (overrideKey) {
+    for (var i = 0; i < representatives.length; i++) {
+      if (representatives[i].sourceKey === overrideKey) return representatives[i]
+    }
+  }
   return representatives[0]
+}
+
+function countPlayers(records) {
+  return orderedRepresentatives(records, "", null).length
+}
+
+// Next representative's sourceKey after currentKey, wrapping; an unknown or
+// absent key lands on the first representative.
+function cyclePlayer(records, currentKey, preferredMediaIdentity, serials) {
+  var preferred = normalizeIdentity(preferredMediaIdentity)
+  var representatives = orderedRepresentatives(records, preferred, serials)
+  if (representatives.length === 0) return ""
+  var index = -1
+  for (var i = 0; i < representatives.length; i++) {
+    if (representatives[i].sourceKey === currentKey) { index = i; break }
+  }
+  return representatives[(index + 1) % representatives.length].sourceKey
+}
+
+// m:ss under an hour, h:mm:ss above; invalid input renders as nothing rather
+// than a fake zero.
+function formatPlaybackTime(seconds) {
+  var s = Math.floor(Number(seconds))
+  if (!isFinite(s) || s < 0) return ""
+  var hours = Math.floor(s / 3600)
+  var minutes = Math.floor((s % 3600) / 60)
+  var secs = s % 60
+  var pad = function (n) { return n < 10 ? "0" + n : String(n) }
+  return hours > 0
+    ? hours + ":" + pad(minutes) + ":" + pad(secs)
+    : minutes + ":" + pad(secs)
+}
+
+// Fill fraction for the seek bar; null when the track has no usable length.
+function positionFraction(positionSeconds, lengthSeconds) {
+  var length = Number(lengthSeconds)
+  var position = Number(positionSeconds)
+  if (!isFinite(length) || length <= 0 || !isFinite(position)) return null
+  return Math.min(1, Math.max(0, position / length))
+}
+
+// Target position in seconds for a seek to `fraction` of the track; null when
+// the player cannot seek or the length is unusable, so the caller never sends
+// a blind seek.
+function clampSeek(fraction, lengthSeconds, canSeek) {
+  if (!canSeek) return null
+  var length = Number(lengthSeconds)
+  var f = Number(fraction)
+  if (!isFinite(length) || length <= 0 || !isFinite(f)) return null
+  return Math.min(length, Math.max(0, f * length))
 }
 
 // Artwork URL whitelist: exact scheme match, everything else rejected.
@@ -189,7 +254,13 @@ if (typeof module !== "undefined") {
     reconcileActivity: reconcileActivity,
     bumpUserAction: bumpUserAction,
     compareRepresentatives: compareRepresentatives,
+    orderedRepresentatives: orderedRepresentatives,
     selectPlayer: selectPlayer,
+    countPlayers: countPlayers,
+    cyclePlayer: cyclePlayer,
+    formatPlaybackTime: formatPlaybackTime,
+    positionFraction: positionFraction,
+    clampSeek: clampSeek,
     allowedArtUrl: allowedArtUrl
   }
 }

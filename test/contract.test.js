@@ -49,27 +49,49 @@ assert.match(nexus, /Hyprland\.focusedMonitor/, 'resolution starts from the focu
 assert.match(nexus, /ToplevelManager\.activeToplevel/, 'falls back to the active toplevel screen')
 assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or closes')
 
-// Closed-state dormancy and animation policy.
-assert.equal((nexus.match(/running: root\.opened/g) || []).length, 3,
-  'clock and both sampler timers stop while the panel is closed')
+// Closed-state dormancy and animation policy. Four opened-gated timers:
+// clock, both samplers, and the media position tick.
+assert.equal((nexus.match(/running: root\.opened/g) || []).length, 4,
+  'every timer stops while the panel is closed')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
 assert.doesNotMatch(nexus, /execDetached|hyprctl|bash -c/, 'plugin builds no shell commands')
 
 // Metrics sampler contract: exactly two whitelisted argument-array commands.
+// The sampler grows files, never processes.
 assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 2,
-  'one stat+mem sampler process and one df process, nothing else')
-assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo"\]/,
-  'cpu/mem sampling reads proc files with an argument array')
+  'one proc sampler process and one df process, nothing else')
+assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo", "\/proc\/net\/dev", "\/proc\/uptime"\]/,
+  'cpu/mem/net/uptime sampling reads proc files with one argument array')
 assert.match(nexus, /command: \["df", "-P", "-k", "\/"\]/,
   'storage sampling uses POSIX df with an argument array')
-assert.match(nexus, /NexusMetricsModel\.parseStatAndMem/, 'sampler output parses through the tested model')
+assert.match(nexus, /NexusMetricsModel\.parseSample/, 'sampler output parses through the tested model')
 assert.match(nexus, /NexusMetricsModel\.parseDiskFree/, 'df output parses through the tested model')
 assert.match(nexus, /NexusMetricsModel\.isStale/, 'stale readings are detected, not shown as fresh')
+
+// Network throughput: rates, history, and sparkline points all through the
+// tested model; rendering stays declarative.
+assert.match(nexus, /NexusMetricsModel\.rateBetween/, 'rates derive from counter deltas in the model')
+assert.match(nexus, /NexusMetricsModel\.pushHistory/, 'history capping goes through the model')
+assert.match(nexus, /NexusMetricsModel\.sparklinePoints/, 'polyline points come from the model')
+assert.match(nexus, /NexusMetricsModel\.formatRate/, 'rate labels format through the model')
+assert.match(nexus, /PathPolyline/, 'the sparkline is a declarative polyline, not Canvas')
+assert.match(nexus, /root\.settings\.showNetwork/, 'showNetwork gates the network card')
+
+// Fetch row: static facts via one-shot async FileView reads (house pattern),
+// uptime rides the existing sampler.
+assert.match(nexus, /FileView \{/, 'static system facts use FileView, not processes')
+assert.match(nexus, /\/proc\/sys\/kernel\/hostname/, 'hostname reads from proc')
+assert.match(nexus, /\/proc\/sys\/kernel\/osrelease/, 'kernel version reads from proc')
+assert.doesNotMatch(nexus, /blockLoading/, 'FileView reads stay async like the rest of the shell')
+assert.match(nexus, /NexusMetricsModel\.fetchLine/, 'the fetch line builds through the tested model')
+assert.match(nexus, /root\.settings\.showFetch/, 'showFetch gates the fetch row')
 
 // Battery is reactive UPower state with a no-battery fallback; never polled.
 assert.match(nexus, /import Quickshell\.Services\.UPower/)
 assert.match(nexus, /UPower\.displayDevice/, 'battery state comes from the display device')
 assert.match(nexus, /NexusMetricsModel\.batteryDetail/, 'battery presence maps through the tested model')
+assert.match(nexus, /timeToEmpty/, 'discharge estimates flow into the detail line')
+assert.match(nexus, /timeToFull/, 'charge estimates flow into the detail line')
 
 // Bar-aware geometry and internal scrolling.
 assert.match(nexus, /shell\.barConfig/, 'margins read the live bar position')
@@ -92,6 +114,30 @@ assert.match(nexus, /canGoNext/, 'next is capability-gated')
 assert.match(nexus, /canGoPrevious/, 'previous is capability-gated')
 assert.match(nexus, /canPause : root\.mediaSelected\.canPlay/, 'play/pause is capability-gated')
 
+// Seek bar contract, per the verified Quickshell MPRIS semantics: the
+// position tick emits positionChanged() only while open+selected+playing;
+// absolute seeks clamp through the model and are double-capability-gated;
+// the bar never trusts an unsupported length (it mirrors position).
+assert.match(nexus, /root\.mediaSelected\.positionChanged\(\)/,
+  'position refresh uses the sanctioned positionChanged() emit')
+assert.match(nexus, /running: root\.opened && root\.mediaSelected !== null && root\.mediaSelected\.isPlaying/,
+  'the position tick is triple-gated')
+assert.match(nexus, /NexusMediaModel\.clampSeek/, 'seek targets clamp through the tested model')
+assert.match(nexus, /player\.canSeek && player\.positionSupported/,
+  'absolute position writes require both capability flags')
+assert.match(nexus, /lengthSupported && mediaSelected\.length > 0/,
+  'only a supported positive length drives the bar')
+assert.match(nexus, /NexusMediaModel\.positionFraction/, 'bar fill fraction comes from the model')
+assert.match(nexus, /NexusMediaModel\.formatPlaybackTime/, 'time labels format through the model')
+
+// Player switcher: the manual override and the cycle share the deterministic
+// order with selection.
+assert.match(nexus, /mediaSerials, mediaOverrideKey\)/,
+  'selection passes the manual override into the tested model')
+assert.match(nexus, /NexusMediaModel\.cyclePlayer/, 'the chip cycles through the tested order')
+assert.match(nexus, /NexusMediaModel\.countPlayers/, 'chip visibility uses the tested count')
+assert.match(nexus, /mediaOverrideKey = ""/, 'the override clears on close')
+
 // Controls contract: reactive state sources, one action path each,
 // serialized pending dispatch, unavailable reasons.
 assert.match(nexus, /import Quickshell\.Services\.Pipewire/, 'audio uses reactive PipeWire state')
@@ -110,7 +156,7 @@ assert.match(nexus, /service unavailable|No output device|No input device/i,
 assert.match(nexus, /NexusSettingsModel\.readSettings/, 'settings go through the tested reader')
 assert.match(nexus, /normalizePayload\(payloadJson, root\.settings\.defaultPage\)/,
   'defaultPage applies only when the payload names no page')
-assert.match(nexus, /settings\.preferredMediaIdentity, mediaSerials\)/,
+assert.match(nexus, /settings\.preferredMediaIdentity, mediaSerials/,
   'media preference flows from validated settings')
 assert.match(nexus, /root\.settings\.showMedia/, 'showMedia gates the media card')
 assert.match(nexus, /root\.settings\.showMetrics/, 'showMetrics gates the metric grid')
@@ -137,6 +183,16 @@ assert.match(nexus, /Math\.min\(Style\.space\(420\), 560\)/,
 assert.match(nexus, /component ArcMeter: Item/, 'metrics render as arc meters')
 assert.match(nexus, /PathAngleArc/, 'arcs are declarative Shapes, not Canvas repaints')
 assert.doesNotMatch(nexus, /\bCanvas\s*\{/, 'no Canvas repaint loops')
+
+// Interaction polish: wheel-cycled tabs, directional page slide, and a
+// per-page keyboard cursor that reaches every actionable row.
+assert.match(nexus, /WheelHandler \{/, 'the tab row cycles on mouse wheel')
+assert.match(nexus, /function setPage\(next\)/, 'page changes route through setPage')
+assert.match(nexus, /pageShift/, 'page content slides directionally')
+assert.match(nexus, /readonly property int lastCursorIndex/, 'the cursor is page-aware')
+assert.match(nexus, /openMenuRoute\("style\.theme"\)\s*\n\s*\}/m, 'style rows are cursor rows')
+assert.equal((nexus.match(/hasCursor: root\.controlCursor === /g) || []).length >= 5, true,
+  'keyboard cursor visuals cover the new rows')
 
 // Theme integration comes from shared tokens only.
 assert.match(nexus, /import qs\.Commons/, 'uses shared Color/Style/Border singletons')

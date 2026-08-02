@@ -156,6 +156,59 @@ const bumped = media.bumpUserAction(trackChange.serials, 'org.mpris.MediaPlayer2
 assert.equal(bumped.lastSerial, 3)
 assert.equal(bumped.serials['org.mpris.MediaPlayer2.mpv'].serial, 3)
 
+// ---- manual override and the player cycle ----------------------------------
+
+// The override wins while its player exists, whatever the deterministic
+// order says.
+const overridden = media.selectPlayer(
+  records([playingSpotify, pausedMpv]), '', {}, 'spotify')
+assert.equal(overridden.busName, 'org.mpris.MediaPlayer2.spotify')
+assert.equal(media.selectPlayer(records([playingSpotify, pausedMpv]), '', {}, 'mpv').busName,
+  'org.mpris.MediaPlayer2.mpv', 'override beats playback-state ranking')
+
+// A vanished override falls back to the deterministic choice.
+assert.equal(media.selectPlayer(records([playingSpotify]), '', {}, 'mpv').busName,
+  'org.mpris.MediaPlayer2.spotify')
+
+// The cycle walks the same total order selection uses, and wraps.
+const cycleFixture = records([playingSpotify, pausedMpv])
+const first = media.selectPlayer(cycleFixture, '', {}).sourceKey
+const second = media.cyclePlayer(cycleFixture, first, '', {})
+assert.notEqual(second, first)
+assert.equal(media.cyclePlayer(cycleFixture, second, '', {}), first, 'cycle wraps')
+assert.equal(media.cyclePlayer(cycleFixture, 'bogus-key', '', {}), first,
+  'an unknown key lands on the first representative')
+assert.equal(media.cyclePlayer([], 'x', '', {}), '', 'no players cycle to nothing')
+
+assert.equal(media.countPlayers(cycleFixture), 2)
+assert.equal(media.countPlayers(records([pausedRealChromium, playingProxyChromium])), 1,
+  'a proxy and its real source count once')
+assert.equal(media.countPlayers([]), 0)
+
+// buildRecord keeps the display identity for the switcher chip.
+assert.equal(media.buildRecord(raw({ identity: '  Spotify  ' })).identity, 'Spotify')
+
+// ---- playback time and seek math -------------------------------------------
+
+assert.equal(media.formatPlaybackTime(0), '0:00')
+assert.equal(media.formatPlaybackTime(42), '0:42')
+assert.equal(media.formatPlaybackTime(231), '3:51')
+assert.equal(media.formatPlaybackTime(3600 + 5 * 60 + 7), '1:05:07')
+assert.equal(media.formatPlaybackTime(-1), '')
+assert.equal(media.formatPlaybackTime('x'), '')
+
+assert.equal(media.positionFraction(60, 240), 0.25)
+assert.equal(media.positionFraction(500, 240), 1, 'position past the end clamps')
+assert.equal(media.positionFraction(-5, 240), 0)
+assert.equal(media.positionFraction(10, 0), null, 'no usable length, no fraction')
+assert.equal(media.positionFraction(10, null), null)
+
+assert.equal(media.clampSeek(0.5, 240, true), 120)
+assert.equal(media.clampSeek(1.5, 240, true), 240, 'seek target clamps to the track')
+assert.equal(media.clampSeek(-0.5, 240, true), 0)
+assert.equal(media.clampSeek(0.5, 240, false), null, 'unseekable players never get a seek')
+assert.equal(media.clampSeek(0.5, 0, true), null, 'lengthless tracks never get a seek')
+
 // ---- artwork scheme whitelist ----------------------------------------------
 
 assert.equal(media.allowedArtUrl('https://example.com/cover.jpg'), 'https://example.com/cover.jpg')

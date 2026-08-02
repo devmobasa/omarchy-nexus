@@ -7,9 +7,14 @@ keystroke away, fully dormant when closed.
 ## Features
 
 - **Header (every page)** — accent clock, date, and focused workspace beside
-  now-playing artwork (accent glow while something plays).
-- **Overview** — capability-gated media transport above CPU, memory,
-  storage, and battery arc meters.
+  now-playing artwork (accent glow while something plays), over a quiet
+  hostname · kernel · uptime line.
+- **Overview** — media with a draggable seek bar (elapsed/total labels,
+  capability-gated) and a player-switcher chip when several players are
+  active; capability-gated transport; CPU, memory, storage, and battery arc
+  meters — battery with time-to-empty/full when UPower knows it; live
+  network throughput as a dual down/up sparkline (virtual interfaces
+  excluded so container and VPN traffic never double-counts).
 - **Controls** — output volume slider, output/input mute, Do Not Disturb,
   night light, stay awake, and Bluetooth, plus Capture and Power quick
   actions that hand off to the Omarchy menu (its own second click confirms
@@ -24,10 +29,11 @@ keystroke away, fully dormant when closed.
 - **Dormant when closed** — no timers, no processes, no media or PipeWire
   bindings while hidden; the panel unloads entirely between summons
   (measured cold summon: p95 88 ms).
-- **Keyboard-driven** — summon, close, switch pages, and drive every
-  Controls-page row without a pointer (see below); the media transport and
-  the Capture, Power, Theme, and Background hand-off buttons are click-only
-  for now.
+- **Keyboard-driven** — every actionable row on every page is reachable
+  without a pointer: media transport, seek, and player switcher on
+  Overview; all toggles plus Capture and Power on Controls; Theme and
+  Background on Style (see the table below). The tab row also cycles on
+  mouse wheel, and page changes slide in from the direction of travel.
 
 ## Install
 
@@ -65,9 +71,9 @@ hyprctl configerrors
 | --- | --- |
 | `Esc` | Close the panel |
 | `Tab` / `Shift+Tab` | Cycle pages |
-| `Down` / `Up` | Walk the control rows (Controls page) |
-| `Enter` / `Space` | Activate the focused control (Controls page) |
-| `Left` / `Right` | Adjust the volume slider when it is focused on the Controls page, otherwise cycle pages |
+| `Down` / `Up` | Walk the current page's rows |
+| `Enter` / `Space` | Activate the focused row |
+| `Left` / `Right` | Act on the focused row when it can — volume slider (±5%), media transport (previous/next), seek bar (±5 s) — otherwise cycle pages |
 
 ## Settings
 
@@ -85,6 +91,8 @@ Invalid values fall back to defaults; Nexus never writes settings.
       "monitor": "DP-3",
       "showMedia": true,
       "showMetrics": true,
+      "showNetwork": true,
+      "showFetch": true,
       "preferredMediaIdentity": "spotify"
     }
   ]
@@ -98,8 +106,10 @@ Presence of the entry is what enables the plugin; remove it or run
 | --- | --- | --- |
 | `defaultPage` | `"overview"` | Page shown when the summon payload names none |
 | `monitor` | `"focused"` | Output name to open on, or `"focused"` |
-| `showMedia` | `true` | Show the media artwork and transport |
+| `showMedia` | `true` | Show the media artwork, transport, and seek bar |
 | `showMetrics` | `true` | Show the metric arc meters |
+| `showNetwork` | `true` | Show the network throughput sparkline (needs `showMetrics`) |
+| `showFetch` | `true` | Show the hostname · kernel · uptime line |
 | `preferredMediaIdentity` | `""` | Prefer this player identity (case-insensitive) among active players |
 
 ## Tests

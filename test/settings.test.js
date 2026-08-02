@@ -14,16 +14,18 @@ for (const input of [null, undefined, [], {}, 'x', [null, 'x', 42], [{ id: 'othe
 }
 
 // A matching entry overrides only with valid values.
-assert.deepEqual(read([{ id: ID, defaultPage: 'controls', monitor: 'DP-3', showMedia: false, showMetrics: false, preferredMediaIdentity: 'Spotify' }]), {
+assert.deepEqual(read([{ id: ID, defaultPage: 'controls', monitor: 'DP-3', showMedia: false, showMetrics: false, showNetwork: false, showFetch: false, preferredMediaIdentity: 'Spotify' }]), {
   defaultPage: 'controls',
   monitor: 'DP-3',
   showMedia: false,
   showMetrics: false,
+  showNetwork: false,
+  showFetch: false,
   preferredMediaIdentity: 'Spotify'
 })
 
 // Invalid values fall back field by field; extra fields are ignored.
-assert.deepEqual(read([{ id: ID, defaultPage: 'bogus', monitor: '   ', showMedia: 'yes', showMetrics: 1, preferredMediaIdentity: 42, extra: true }]),
+assert.deepEqual(read([{ id: ID, defaultPage: 'bogus', monitor: '   ', showMedia: 'yes', showMetrics: 1, showNetwork: 0, showFetch: 'no', preferredMediaIdentity: 42, extra: true }]),
   settings.DEFAULTS)
 
 // Only the exact id matches; the first matching entry wins.

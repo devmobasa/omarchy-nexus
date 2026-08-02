@@ -10,6 +10,8 @@ var DEFAULTS = {
   monitor: "focused",
   showMedia: true,
   showMetrics: true,
+  showNetwork: true,
+  showFetch: true,
   preferredMediaIdentity: ""
 }
 
@@ -40,6 +42,8 @@ function readSettings(pluginsArray, pluginId, validPages) {
     monitor: monitor,
     showMedia: entry.showMedia === false ? false : DEFAULTS.showMedia,
     showMetrics: entry.showMetrics === false ? false : DEFAULTS.showMetrics,
+    showNetwork: entry.showNetwork === false ? false : DEFAULTS.showNetwork,
+    showFetch: entry.showFetch === false ? false : DEFAULTS.showFetch,
     preferredMediaIdentity: typeof entry.preferredMediaIdentity === "string"
       ? entry.preferredMediaIdentity : DEFAULTS.preferredMediaIdentity
   }
