@@ -127,6 +127,49 @@ function relativeTime(timestampMs, nowMs) {
   return Math.floor(hours / 24) + " d ago"
 }
 
+// ---- clipboard history (omarchy.clipboard state file) -----------------------
+
+function clipboardPath(xdgStateHome, home) {
+  var base = typeof xdgStateHome === "string" && xdgStateHome.trim().length > 0
+    ? xdgStateHome.trim()
+    : String(home == null ? "" : home) + "/.local/state"
+  return base + "/omarchy/clipboard-history.json"
+}
+
+// Newest-first rows: text entries carry a one-line preview and the full
+// text for copying; image entries carry their label only (the full manager
+// owns image re-copying).
+function parseClipboard(text, cap) {
+  var parsed = null
+  if (typeof text === "string" && text.length > 0) {
+    try { parsed = JSON.parse(text) } catch (error) { parsed = null }
+  }
+  if (!Array.isArray(parsed)) return []
+  var limit = Number(cap)
+  if (!isFinite(limit) || limit < 1) limit = 15
+  var rows = []
+  for (var i = 0; i < parsed.length && rows.length < limit; i++) {
+    var entry = parsed[i]
+    if (!entry || typeof entry !== "object") continue
+    if (entry.type === "text" && typeof entry.text === "string" && entry.text.trim().length > 0) {
+      var preview = entry.text.replace(/\s+/g, " ").trim()
+      if (preview.length > 120) preview = preview.slice(0, 117) + "…"
+      rows.push({ kind: "text", preview: preview, text: entry.text })
+    } else if (entry.type === "image") {
+      rows.push({
+        kind: "image",
+        preview: "[image] " + (typeof entry.capturedAt === "string" ? entry.capturedAt : ""),
+        text: ""
+      })
+    }
+  }
+  return rows
+}
+
+function copyCommand(text) {
+  return ["wl-copy", "--", String(text == null ? "" : text)]
+}
+
 // ---- quick notes ------------------------------------------------------------
 
 function notesPath(xdgStateHome, home) {
@@ -170,6 +213,9 @@ if (typeof module !== "undefined") {
     notificationsPath: notificationsPath,
     parseNotifications: parseNotifications,
     relativeTime: relativeTime,
+    clipboardPath: clipboardPath,
+    parseClipboard: parseClipboard,
+    copyCommand: copyCommand,
     notesPath: notesPath,
     GAME_MODE_PRESETS: GAME_MODE_PRESETS,
     activePreset: activePreset

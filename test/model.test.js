@@ -52,9 +52,10 @@ assert.deepEqual(model.tabPages(), model.PAGES.filter(p => p !== 'settings'))
 for (const page of model.PAGES) {
   assert.deepEqual(model.normalizePayload(JSON.stringify({ page })), { page })
 }
-assert.ok(model.pageIcon('keys').length > 0)
-assert.ok(model.pageIcon('media').length > 0)
-assert.equal(model.pageIcon('overview'), '', 'wide pages stay labelled')
+for (const page of model.PAGES) {
+  assert.ok(model.pageIcon(page).length > 0, `${page} has a tab icon`)
+}
+assert.equal(model.pageIcon('bogus'), '', 'unknown pages have no icon')
 
 // Display helpers cover every page and fall back for invalid input. Every
 // page has real content now, so all placeholders are empty.

@@ -40,6 +40,21 @@ Item {
   readonly property bool metricsActive: opened
   readonly property string focusRole: controlCursor >= 0 ? "control" : "tab"
 
+  // ---- shared style + interaction constants --------------------------------
+  readonly property string pluginId: manifest && manifest.id ? manifest.id : "community.omarchy-nexus"
+  readonly property real volumeStep: 0.05
+  readonly property int seekStepSeconds: 5
+
+  // Theme-derived soft fills; reads inside the helpers keep bindings
+  // reactive to theme changes.
+  function softText(alpha) {
+    return Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, alpha)
+  }
+
+  function softAccent(alpha) {
+    return Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, alpha)
+  }
+
   // ---- validated settings ---------------------------------------------------
   // Two layers: the read-only shell.json entry, overridden by the Settings
   // page's state file. Nexus never writes shell.json.
@@ -47,7 +62,7 @@ Item {
   readonly property var settings: NexusSettingsModel.applyState(
     NexusSettingsModel.readSettings(
       shell && shell.shellConfig ? shell.shellConfig.plugins : null,
-      manifest && manifest.id ? manifest.id : "community.omarchy-nexus",
+      root.pluginId,
       NexusModel.PAGES),
     stateOverrides)
 
@@ -124,7 +139,7 @@ Item {
       ensureDirsProcess.writeCavaAfter = true
       runProcess(ensureDirsProcess)
     }
-    if (root.page === "keys" && !bindsProcess.running) bindsProcess.running = true
+    if (root.page === NexusModel.PAGE_KEYS && !bindsProcess.running) bindsProcess.running = true
     Qt.callLater(function () {
       if (root.opened) keyCatcher.forceActiveFocus()
     })
@@ -160,7 +175,7 @@ Item {
   function requestClose() {
     if (closingFromHost) return
     if (shell && typeof shell.hide === "function")
-      shell.hide(manifest && manifest.id ? manifest.id : "community.omarchy-nexus")
+      shell.hide(root.pluginId)
     else root.opened = false
   }
 
@@ -409,7 +424,7 @@ Item {
   Process {
     id: cavaProcess
     property bool exitSeen: false
-    running: root.opened && root.page === "overview" && root.cavaConfWritten
+    running: root.opened && root.page === NexusModel.PAGE_OVERVIEW && root.cavaConfWritten
       && root.cavaAvailable && root.settings.showMedia && root.settings.showVisualizer
       && root.mediaSelected !== null && root.mediaSelected.isPlaying
     command: NexusCavaModel.cavaCommand(root.cavaConfFile)
@@ -547,6 +562,39 @@ Item {
 
   function clearNotificationHistory() {
     if (dndService && typeof dndService.clearPast === "function") dndService.clearPast()
+  }
+
+  // Clipboard history (omarchy.clipboard state file): text rows copy back
+  // via wl-copy; image rows defer to the full first-party manager.
+  readonly property string clipboardFile: NexusSuiteModel.clipboardPath(
+    Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+  property string clipboardText: ""
+  readonly property var clipboardRows: NexusSuiteModel.parseClipboard(clipboardText, 15)
+  property string copiedPreview: ""
+
+  FileView {
+    path: root.opened ? root.clipboardFile : ""
+    printErrors: false
+    watchChanges: true
+    onLoaded: root.clipboardText = text()
+    onLoadFailed: root.clipboardText = ""
+    onFileChanged: reload()
+  }
+
+  Process {
+    id: copyProcess
+    command: ["wl-copy", "--", ""]
+  }
+
+  function copyClipboardRow(row) {
+    if (!row) return
+    if (row.kind !== "text") {
+      summonSibling("omarchy.clipboard")
+      return
+    }
+    copyProcess.command = NexusSuiteModel.copyCommand(row.text)
+    copyProcess.running = true
+    copiedPreview = row.preview
   }
 
   // Quick notes: one markdown file, debounce-autosaved.
@@ -731,10 +779,11 @@ Item {
   onPageChanged: {
     controlCursor = -1
     keysQuery = ""
-    if (page === "keys" && opened && !bindsProcess.running) bindsProcess.running = true
+    copiedPreview = ""
+    if (page === NexusModel.PAGE_KEYS && opened && !bindsProcess.running) bindsProcess.running = true
     if (opened) Qt.callLater(function () {
       if (!root.opened) return
-      if (root.page === "notes") notesEditor.forceActiveFocus()
+      if (root.page === NexusModel.PAGE_NOTES) notesEditor.forceActiveFocus()
       else keyCatcher.forceActiveFocus()
     })
   }
@@ -766,46 +815,49 @@ Item {
   ]
 
   readonly property int lastCursorIndex: {
-    if (page === "controls") return 10
-    if (page === "overview") {
+    if (page === NexusModel.PAGE_CONTROLS) return NexusModel.CONTROLS_LAST_ROW
+    if (page === NexusModel.PAGE_OVERVIEW) {
       if (!settings.showMedia || mediaSelected === null) return -1
       return mediaPlayerCount > 1 ? 2 : 1
     }
-    if (page === "style") return 1
-    if (page === "settings") return settingsRows.length - 1
-    if (page === "media") return mediaAllPlayers.length - 1
+    if (page === NexusModel.PAGE_STYLE) return NexusModel.STYLE_ROWS.BACKGROUND
+    if (page === NexusModel.PAGE_SETTINGS) return settingsRows.length - 1
+    if (page === NexusModel.PAGE_MEDIA) return mediaAllPlayers.length - 1
+    if (page === NexusModel.PAGE_CLIPBOARD) return clipboardRows.length - 1
     return -1
   }
 
   function activateControl(index) {
-    if (page === "overview") {
-      if (index === 0) mediaAction("playpause")
-      else if (index === 2) cycleMediaPlayer()
-    } else if (page === "controls") {
-      if (index === 0) dispatchControl("mute-output", toggleOutputMute)
-      else if (index === 1) dispatchControl("mute-output", toggleOutputMute)
-      else if (index === 2) dispatchControl("mute-microphone", toggleInputMute)
-      else if (index === 3) dispatchControl("dnd", toggleDnd)
-      else if (index === 4) dispatchControl("night-light", toggleNightlight)
-      else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
-      else if (index === 6) dispatchControl("bluetooth", toggleBluetooth)
-      else if (index === 7) toggleGameMode()
-      else if (index === 8) togglePomodoro()
-      else if (index === 9) openMenuRoute("trigger.capture")
-      else if (index === 10) openMenuRoute("system")
-    } else if (page === "style") {
-      if (index === 0) openMenuRoute("style.theme")
-      else if (index === 1) openMenuRoute("style.background")
-    } else if (page === "settings") {
+    if (page === NexusModel.PAGE_OVERVIEW) {
+      if (index === NexusModel.OVERVIEW_ROWS.TRANSPORT) mediaAction("playpause")
+      else if (index === NexusModel.OVERVIEW_ROWS.PLAYER_CHIP) cycleMediaPlayer()
+    } else if (page === NexusModel.PAGE_CONTROLS) {
+      if (index === NexusModel.CONTROLS_ROWS.VOLUME) dispatchControl("mute-output", toggleOutputMute)
+      else if (index === NexusModel.CONTROLS_ROWS.MUTE) dispatchControl("mute-output", toggleOutputMute)
+      else if (index === NexusModel.CONTROLS_ROWS.MICROPHONE) dispatchControl("mute-microphone", toggleInputMute)
+      else if (index === NexusModel.CONTROLS_ROWS.DND) dispatchControl("dnd", toggleDnd)
+      else if (index === NexusModel.CONTROLS_ROWS.NIGHT_LIGHT) dispatchControl("night-light", toggleNightlight)
+      else if (index === NexusModel.CONTROLS_ROWS.STAY_AWAKE) dispatchControl("stay-awake", toggleStayAwake)
+      else if (index === NexusModel.CONTROLS_ROWS.BLUETOOTH) dispatchControl("bluetooth", toggleBluetooth)
+      else if (index === NexusModel.CONTROLS_ROWS.GAME_MODE) toggleGameMode()
+      else if (index === NexusModel.CONTROLS_ROWS.POMODORO) togglePomodoro()
+      else if (index === NexusModel.CONTROLS_ROWS.CAPTURE) openMenuRoute(NexusModel.MENU_ROUTES.capture)
+      else if (index === NexusModel.CONTROLS_ROWS.POWER) openMenuRoute(NexusModel.MENU_ROUTES.power)
+    } else if (page === NexusModel.PAGE_STYLE) {
+      if (index === NexusModel.STYLE_ROWS.THEME) openMenuRoute(NexusModel.MENU_ROUTES.theme)
+      else if (index === NexusModel.STYLE_ROWS.BACKGROUND) openMenuRoute(NexusModel.MENU_ROUTES.background)
+    } else if (page === NexusModel.PAGE_SETTINGS) {
       var row = settingsRows[index]
       if (row) updateSetting(row.key, settings[row.key] !== true)
-    } else if (page === "media") {
+    } else if (page === NexusModel.PAGE_MEDIA) {
       var player = mediaAllPlayers[index]
       if (player) {
         selectPlayerByObject(player)
         if (player.isPlaying && player.canPause) player.pause()
         else if (!player.isPlaying && player.canPlay) player.play()
       }
+    } else if (page === NexusModel.PAGE_CLIPBOARD) {
+      copyClipboardRow(clipboardRows[index])
     }
   }
 
@@ -1163,7 +1215,7 @@ Item {
     property string detail: ""
     implicitHeight: meterColumn.implicitHeight
 
-    readonly property color trackColor: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.12)
+    readonly property color trackColor: root.softText(0.12)
     readonly property color valueColor: stale || percent === null
       ? Qt.darker(Color.menu.text, 1.6) : Color.accent
 
@@ -1343,13 +1395,13 @@ Item {
         Keys.onPressed: function (event) {
           if (event.key === Qt.Key_Escape) {
             // On the keys page Escape clears the filter first.
-            if (root.page === "keys" && root.keysQuery !== "") root.keysQuery = ""
+            if (root.page === NexusModel.PAGE_KEYS && root.keysQuery !== "") root.keysQuery = ""
             else root.requestClose()
             event.accepted = true
-          } else if (root.page === "keys" && event.key === Qt.Key_Backspace) {
+          } else if (root.page === NexusModel.PAGE_KEYS && event.key === Qt.Key_Backspace) {
             root.keysQuery = root.keysQuery.slice(0, -1)
             event.accepted = true
-          } else if (root.page === "keys" && event.text.length === 1
+          } else if (root.page === NexusModel.PAGE_KEYS && event.text.length === 1
               && event.text >= " " && event.key !== Qt.Key_Tab) {
             root.keysQuery += event.text
             event.accepted = true
@@ -1366,14 +1418,14 @@ Item {
           } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
             var forward = event.key === Qt.Key_Right
             var consumed = false
-            if (root.page === "controls" && root.controlCursor === 0) {
-              root.setOutputVolume(root.outputVolume + (forward ? 0.05 : -0.05))
+            if (root.page === NexusModel.PAGE_CONTROLS && root.controlCursor === NexusModel.CONTROLS_ROWS.VOLUME) {
+              root.setOutputVolume(root.outputVolume + (forward ? root.volumeStep : -root.volumeStep))
               consumed = true
-            } else if (root.page === "overview" && root.controlCursor === 0) {
+            } else if (root.page === NexusModel.PAGE_OVERVIEW && root.controlCursor === NexusModel.OVERVIEW_ROWS.TRANSPORT) {
               consumed = root.mediaAction(forward ? "next" : "previous")
-            } else if (root.page === "overview" && root.controlCursor === 1) {
-              consumed = root.seekBy(forward ? 5 : -5)
-            } else if (root.page === "media" && root.controlCursor >= 0) {
+            } else if (root.page === NexusModel.PAGE_OVERVIEW && root.controlCursor === NexusModel.OVERVIEW_ROWS.SEEK) {
+              consumed = root.seekBy(forward ? root.seekStepSeconds : -root.seekStepSeconds)
+            } else if (root.page === NexusModel.PAGE_MEDIA && root.controlCursor >= 0) {
               var focusedPlayer = root.mediaAllPlayers[root.controlCursor]
               if (focusedPlayer) {
                 if (forward && focusedPlayer.canGoNext) { focusedPlayer.next(); consumed = true }
@@ -1458,13 +1510,13 @@ Item {
               height: Style.space(72)
               radius: Style.cornerRadius
               anchors.verticalCenter: parent.verticalCenter
-              color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.06)
+              color: root.softText(0.06)
               clip: true
               // Restrained accent glow while something is playing.
               border.width: 1
               border.color: root.mediaSelected && root.mediaSelected.isPlaying
-                ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.65)
-                : Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10)
+                ? root.softAccent(0.65)
+                : root.softText(0.10)
 
               Image {
                 id: artwork
@@ -1534,11 +1586,10 @@ Item {
 
                 Button {
                   required property string modelData
-                  // Narrow pages render icon-only so the row fits the card.
-                  readonly property string icon: NexusModel.pageIcon(modelData)
-                  text: icon === "" ? NexusModel.pageTitle(modelData) : ""
-                  iconText: icon
-                  tooltipText: icon === "" ? "" : NexusModel.pageTitle(modelData)
+                  // Icon-only tabs stay uniform at any page count; the
+                  // title lives in the tooltip.
+                  iconText: NexusModel.pageIcon(modelData)
+                  tooltipText: NexusModel.pageTitle(modelData)
                   active: root.page === modelData
                   onClicked: root.setPage(modelData)
                 }
@@ -1549,9 +1600,9 @@ Item {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               iconText: "󰒓"
-              active: root.page === "settings"
+              active: root.page === NexusModel.PAGE_SETTINGS
               tooltipText: "Nexus settings"
-              onClicked: root.setPage("settings")
+              onClicked: root.setPage(NexusModel.PAGE_SETTINGS)
             }
           }
 
@@ -1564,12 +1615,12 @@ Item {
 
           // ---- overview: media card ---------------------------------------
           BorderSurface {
-            visible: root.page === "overview" && root.settings.showMedia
+            visible: root.page === NexusModel.PAGE_OVERVIEW && root.settings.showMedia
             width: parent.width
             implicitHeight: mediaColumn.implicitHeight + Style.spacing.rowPaddingX * 2
             radius: Style.cornerRadius
-            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
-            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+            color: root.softText(0.04)
+            borderSpec: Border.flat(root.softText(0.10), 1)
 
             Column {
               id: mediaColumn
@@ -1619,21 +1670,21 @@ Item {
                   Button {
                     iconText: "󰒮"
                     enabled: root.mediaSelected !== null && root.mediaSelected.canGoPrevious
-                    onHovered: function (h) { if (h) root.controlCursor = 0 }
+                    onHovered: function (h) { if (h) root.controlCursor = NexusModel.OVERVIEW_ROWS.TRANSPORT }
                     onClicked: root.mediaAction("previous")
                   }
                   Button {
                     iconText: root.mediaSelected && root.mediaSelected.isPlaying ? "󰏤" : "󰐊"
                     enabled: root.mediaSelected !== null
                       && (root.mediaSelected.isPlaying ? root.mediaSelected.canPause : root.mediaSelected.canPlay)
-                    hasCursor: root.controlCursor === 0 && root.page === "overview"
-                    onHovered: function (h) { if (h) root.controlCursor = 0 }
+                    hasCursor: root.controlCursor === NexusModel.OVERVIEW_ROWS.TRANSPORT && root.page === NexusModel.PAGE_OVERVIEW
+                    onHovered: function (h) { if (h) root.controlCursor = NexusModel.OVERVIEW_ROWS.TRANSPORT }
                     onClicked: root.mediaAction("playpause")
                   }
                   Button {
                     iconText: "󰒭"
                     enabled: root.mediaSelected !== null && root.mediaSelected.canGoNext
-                    onHovered: function (h) { if (h) root.controlCursor = 0 }
+                    onHovered: function (h) { if (h) root.controlCursor = NexusModel.OVERVIEW_ROWS.TRANSPORT }
                     onClicked: root.mediaAction("next")
                   }
                 }
@@ -1687,7 +1738,7 @@ Item {
                     width: parent.width
                     height: Style.space(3)
                     radius: height / 2
-                    color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.14)
+                    color: root.softText(0.14)
                   }
 
                   Rectangle {
@@ -1695,14 +1746,14 @@ Item {
                     width: parent.width * parent.parent.barFraction
                     height: Style.space(3)
                     radius: height / 2
-                    color: root.controlCursor === 1 && root.page === "overview"
-                      ? Color.accent : Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.75)
+                    color: root.controlCursor === NexusModel.OVERVIEW_ROWS.SEEK && root.page === NexusModel.PAGE_OVERVIEW
+                      ? Color.accent : root.softAccent(0.75)
                   }
 
                   Rectangle {
                     visible: parent.parent.seekable
                       && (seekMouse.containsMouse || root.seekDragging
-                          || (root.controlCursor === 1 && root.page === "overview"))
+                          || (root.controlCursor === NexusModel.OVERVIEW_ROWS.SEEK && root.page === NexusModel.PAGE_OVERVIEW))
                     x: parent.width * parent.parent.barFraction - width / 2
                     anchors.verticalCenter: parent.verticalCenter
                     width: Style.space(10)
@@ -1716,7 +1767,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     enabled: parent.parent.seekable
-                    onEntered: root.controlCursor = 1
+                    onEntered: root.controlCursor = NexusModel.OVERVIEW_ROWS.SEEK
                     onPressed: function (mouse) {
                       root.seekDragging = true
                       root.seekPreviewFraction = Math.max(0, Math.min(1, mouse.x / width))
@@ -1763,7 +1814,7 @@ Item {
                     height: Math.max(2, parent.height * modelData)
                     y: parent.height - height
                     radius: 1
-                    color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.45)
+                    color: root.softAccent(0.45)
                   }
                 }
               }
@@ -1777,9 +1828,9 @@ Item {
                   ? (root.mediaSelected.identity || root.mediaSelected.dbusName || "Player")
                   : ""
                 fontSize: Style.font.bodySmall
-                hasCursor: root.controlCursor === 2 && root.page === "overview"
+                hasCursor: root.controlCursor === NexusModel.OVERVIEW_ROWS.PLAYER_CHIP && root.page === NexusModel.PAGE_OVERVIEW
                 tooltipText: "Switch player (" + root.mediaPlayerCount + " active)"
-                onHovered: function (h) { if (h) root.controlCursor = 2 }
+                onHovered: function (h) { if (h) root.controlCursor = NexusModel.OVERVIEW_ROWS.PLAYER_CHIP }
                 onClicked: root.cycleMediaPlayer()
               }
             }
@@ -1787,7 +1838,7 @@ Item {
 
           // ---- overview: metric cards -------------------------------------
           Grid {
-            visible: root.page === "overview" && root.settings.showMetrics
+            visible: root.page === NexusModel.PAGE_OVERVIEW && root.settings.showMetrics
             width: parent.width
             columns: width < Style.space(300) ? 1 : 2
             columnSpacing: Style.spacing.md
@@ -1839,12 +1890,12 @@ Item {
           // ---- overview: network throughput -------------------------------
           BorderSurface {
             id: netCard
-            visible: root.page === "overview" && root.settings.showMetrics && root.settings.showNetwork
+            visible: root.page === NexusModel.PAGE_OVERVIEW && root.settings.showMetrics && root.settings.showNetwork
             width: parent.width
             implicitHeight: netColumn.implicitHeight + Style.spacing.rowPaddingX * 2
             radius: Style.cornerRadius
-            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
-            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+            color: root.softText(0.04)
+            borderSpec: Border.flat(root.softText(0.10), 1)
 
             readonly property bool netStale: NexusMetricsModel.isStale(
               root.statSampledAt, root.now.getTime(), NexusMetricsModel.CPU_MEM_INTERVAL_MS)
@@ -1951,13 +2002,13 @@ Item {
 
           // ---- overview: hardware sensors ---------------------------------
           BorderSurface {
-            visible: root.page === "overview" && root.settings.showMetrics
+            visible: root.page === NexusModel.PAGE_OVERVIEW && root.settings.showMetrics
               && root.settings.showSensors && root.sensorReadings.length > 0
             width: parent.width
             implicitHeight: sensorsColumn.implicitHeight + Style.spacing.rowPaddingX * 2
             radius: Style.cornerRadius
-            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
-            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+            color: root.softText(0.04)
+            borderSpec: Border.flat(root.softText(0.10), 1)
 
             Column {
               id: sensorsColumn
@@ -2007,13 +2058,13 @@ Item {
 
           // ---- overview: screen time (community.screen-time day file) -----
           BorderSurface {
-            visible: root.page === "overview" && root.settings.showScreenTime
+            visible: root.page === NexusModel.PAGE_OVERVIEW && root.settings.showScreenTime
               && root.screenTimeSummary !== null
             width: parent.width
             implicitHeight: screenTimeRow.implicitHeight + Style.spacing.rowPaddingX * 2
             radius: Style.cornerRadius
-            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
-            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+            color: root.softText(0.04)
+            borderSpec: Border.flat(root.softText(0.10), 1)
 
             Item {
               id: screenTimeRow
@@ -2051,7 +2102,7 @@ Item {
 
           // ---- media page: every active player ----------------------------
           Column {
-            visible: root.page === "media"
+            visible: root.page === NexusModel.PAGE_MEDIA
             width: parent.width
             spacing: Style.space(4)
 
@@ -2076,7 +2127,7 @@ Item {
                 implicitHeight: playerInner.implicitHeight + Style.spacing.rowPaddingX * 2
                 outline: true
                 foreground: Color.menu.text
-                hasCursor: root.controlCursor === index && root.page === "media"
+                hasCursor: root.controlCursor === index && root.page === NexusModel.PAGE_MEDIA
                 current: isSelected
 
                 HoverHandler {
@@ -2158,7 +2209,7 @@ Item {
 
           // ---- notes page: autosaving scratchpad --------------------------
           Column {
-            visible: root.page === "notes"
+            visible: root.page === NexusModel.PAGE_NOTES
             width: parent.width
             spacing: Style.space(4)
 
@@ -2166,8 +2217,8 @@ Item {
               width: parent.width
               implicitHeight: Math.max(Style.space(220), notesEditor.implicitHeight + Style.space(20))
               radius: Style.cornerRadius
-              color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
-              borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+              color: root.softText(0.04)
+              borderSpec: Border.flat(root.softText(0.10), 1)
 
               TextEdit {
                 id: notesEditor
@@ -2179,7 +2230,7 @@ Item {
                 selectedTextColor: Color.menu.background
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
-                onTextChanged: if (root.notesLoaded && root.page === "notes") root.notesDirty = true
+                onTextChanged: if (root.notesLoaded && root.page === NexusModel.PAGE_NOTES) root.notesDirty = true
                 Keys.onEscapePressed: root.requestClose()
               }
             }
@@ -2196,9 +2247,92 @@ Item {
             }
           }
 
+          // ---- clipboard page: recent history, click to copy --------------
+          Column {
+            visible: root.page === NexusModel.PAGE_CLIPBOARD
+            width: parent.width
+            spacing: Style.space(4)
+
+            Item {
+              width: parent.width
+              height: clipboardTitle.implicitHeight
+
+              Text {
+                id: clipboardTitle
+                anchors.left: parent.left
+                text: root.copiedPreview !== ""
+                  ? "Copied: " + root.copiedPreview
+                  : root.clipboardRows.length + " recent clips — click to copy"
+                color: root.copiedPreview !== "" ? Color.accent : Color.menu.text
+                width: parent.width - clipboardManagerButton.width - Style.space(8)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Button {
+                id: clipboardManagerButton
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Full manager"
+                fontSize: Style.font.caption
+                onClicked: root.summonSibling("omarchy.clipboard")
+              }
+            }
+
+            Text {
+              visible: root.clipboardRows.length === 0
+              width: parent.width
+              text: "Clipboard history is empty."
+              color: Qt.darker(Color.menu.text, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Repeater {
+              model: root.clipboardRows
+
+              CursorSurface {
+                id: clipRow
+                required property var modelData
+                required property int index
+                width: parent.width
+                implicitHeight: clipText.implicitHeight + Style.space(8)
+                outline: true
+                foreground: Color.menu.text
+                hasCursor: root.controlCursor === index && root.page === NexusModel.PAGE_CLIPBOARD
+
+                HoverHandler {
+                  onHoveredChanged: if (hovered) root.controlCursor = clipRow.index
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: root.copyClipboardRow(clipRow.modelData)
+                }
+
+                Text {
+                  id: clipText
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.leftMargin: Style.space(10)
+                  anchors.rightMargin: Style.space(10)
+                  text: clipRow.modelData.preview
+                  color: clipRow.modelData.kind === "image"
+                    ? Qt.darker(Color.menu.text, 1.4) : Color.menu.text
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+              }
+            }
+          }
+
           // ---- alerts page: notification history --------------------------
           Column {
-            visible: root.page === "alerts"
+            visible: root.page === NexusModel.PAGE_ALERTS
             width: parent.width
             spacing: Style.space(4)
 
@@ -2292,7 +2426,7 @@ Item {
 
           // ---- keys: searchable keybind cheatsheet ------------------------
           Column {
-            visible: root.page === "keys"
+            visible: root.page === NexusModel.PAGE_KEYS
             width: parent.width
             spacing: Style.space(4)
 
@@ -2323,7 +2457,7 @@ Item {
                   implicitHeight: comboText.implicitHeight + Style.space(4)
                   height: implicitHeight
                   radius: Style.cornerRadius / 2
-                  color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.14)
+                  color: root.softAccent(0.14)
 
                   Text {
                     id: comboText
@@ -2363,15 +2497,15 @@ Item {
 
           // ---- controls: volume slider ------------------------------------
           CursorSurface {
-            visible: root.page === "controls"
+            visible: root.page === NexusModel.PAGE_CONTROLS
             width: parent.width
             implicitHeight: volumeRow.implicitHeight + Style.spacing.rowPaddingX * 2
             outline: true
             foreground: Color.menu.text
-            hasCursor: root.controlCursor === 0
+            hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.VOLUME
 
             HoverHandler {
-              onHoveredChanged: if (hovered) root.controlCursor = 0
+              onHoveredChanged: if (hovered) root.controlCursor = NexusModel.CONTROLS_ROWS.VOLUME
             }
 
             Row {
@@ -2417,7 +2551,7 @@ Item {
 
           // ---- controls: toggles ------------------------------------------
           Column {
-            visible: root.page === "controls"
+            visible: root.page === NexusModel.PAGE_CONTROLS
             width: parent.width
             spacing: Style.space(4)
 
@@ -2430,10 +2564,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 1
-              onHovered: function (h) { if (h) root.controlCursor = 1 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.MUTE
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.MUTE }
               onClicked: {
-                root.controlCursor = 1
+                root.controlCursor = NexusModel.CONTROLS_ROWS.MUTE
                 root.dispatchControl("mute-output", root.toggleOutputMute)
               }
             }
@@ -2447,10 +2581,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 2
-              onHovered: function (h) { if (h) root.controlCursor = 2 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.MICROPHONE
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.MICROPHONE }
               onClicked: {
-                root.controlCursor = 2
+                root.controlCursor = NexusModel.CONTROLS_ROWS.MICROPHONE
                 root.dispatchControl("mute-microphone", root.toggleInputMute)
               }
             }
@@ -2464,10 +2598,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 3
-              onHovered: function (h) { if (h) root.controlCursor = 3 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.DND
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.DND }
               onClicked: {
-                root.controlCursor = 3
+                root.controlCursor = NexusModel.CONTROLS_ROWS.DND
                 root.dispatchControl("dnd", root.toggleDnd)
               }
             }
@@ -2481,10 +2615,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 4
-              onHovered: function (h) { if (h) root.controlCursor = 4 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.NIGHT_LIGHT
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.NIGHT_LIGHT }
               onClicked: {
-                root.controlCursor = 4
+                root.controlCursor = NexusModel.CONTROLS_ROWS.NIGHT_LIGHT
                 root.dispatchControl("night-light", root.toggleNightlight)
               }
             }
@@ -2498,10 +2632,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 5
-              onHovered: function (h) { if (h) root.controlCursor = 5 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.STAY_AWAKE
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.STAY_AWAKE }
               onClicked: {
-                root.controlCursor = 5
+                root.controlCursor = NexusModel.CONTROLS_ROWS.STAY_AWAKE
                 root.dispatchControl("stay-awake", root.toggleStayAwake)
               }
             }
@@ -2515,10 +2649,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 6
-              onHovered: function (h) { if (h) root.controlCursor = 6 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.BLUETOOTH
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.BLUETOOTH }
               onClicked: {
-                root.controlCursor = 6
+                root.controlCursor = NexusModel.CONTROLS_ROWS.BLUETOOTH
                 root.dispatchControl("bluetooth", root.toggleBluetooth)
               }
             }
@@ -2539,10 +2673,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 7 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 7 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.GAME_MODE && root.page === NexusModel.PAGE_CONTROLS
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.GAME_MODE }
               onClicked: {
-                root.controlCursor = 7
+                root.controlCursor = NexusModel.CONTROLS_ROWS.GAME_MODE
                 root.toggleGameMode()
               }
             }
@@ -2562,10 +2696,10 @@ Item {
               foreground: Color.menu.text
               accent: Color.accent
               fontFamily: Style.font.family
-              hasCursor: root.controlCursor === 8 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 8 }
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.POMODORO && root.page === NexusModel.PAGE_CONTROLS
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.POMODORO }
               onClicked: {
-                root.controlCursor = 8
+                root.controlCursor = NexusModel.CONTROLS_ROWS.POMODORO
                 root.togglePomodoro()
               }
             }
@@ -2573,28 +2707,28 @@ Item {
 
           // ---- controls: capture and power quick actions ------------------
           Row {
-            visible: root.page === "controls"
+            visible: root.page === NexusModel.PAGE_CONTROLS
             spacing: Style.spacing.controlGap
 
             Button {
               iconText: ""
               text: "Capture"
-              hasCursor: root.controlCursor === 9 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 9 }
-              onClicked: root.openMenuRoute("trigger.capture")
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.CAPTURE && root.page === NexusModel.PAGE_CONTROLS
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.CAPTURE }
+              onClicked: root.openMenuRoute(NexusModel.MENU_ROUTES.capture)
             }
             Button {
               iconText: "󰐥"
               text: "Power"
-              hasCursor: root.controlCursor === 10 && root.page === "controls"
-              onHovered: function (h) { if (h) root.controlCursor = 10 }
-              onClicked: root.openMenuRoute("system")
+              hasCursor: root.controlCursor === NexusModel.CONTROLS_ROWS.POWER && root.page === NexusModel.PAGE_CONTROLS
+              onHovered: function (h) { if (h) root.controlCursor = NexusModel.CONTROLS_ROWS.POWER }
+              onClicked: root.openMenuRoute(NexusModel.MENU_ROUTES.power)
             }
           }
 
           // ---- style: delegate to the existing selectors ------------------
           Column {
-            visible: root.page === "style"
+            visible: root.page === NexusModel.PAGE_STYLE
             width: parent.width
             spacing: Style.spacing.md
 
@@ -2613,23 +2747,23 @@ Item {
               Button {
                 iconText: "󰸌"
                 text: "Theme"
-                hasCursor: root.controlCursor === 0 && root.page === "style"
-                onHovered: function (h) { if (h) root.controlCursor = 0 }
-                onClicked: root.openMenuRoute("style.theme")
+                hasCursor: root.controlCursor === NexusModel.STYLE_ROWS.THEME && root.page === NexusModel.PAGE_STYLE
+                onHovered: function (h) { if (h) root.controlCursor = NexusModel.STYLE_ROWS.THEME }
+                onClicked: root.openMenuRoute(NexusModel.MENU_ROUTES.theme)
               }
               Button {
                 iconText: ""
                 text: "Background"
-                hasCursor: root.controlCursor === 1 && root.page === "style"
-                onHovered: function (h) { if (h) root.controlCursor = 1 }
-                onClicked: root.openMenuRoute("style.background")
+                hasCursor: root.controlCursor === NexusModel.STYLE_ROWS.BACKGROUND && root.page === NexusModel.PAGE_STYLE
+                onHovered: function (h) { if (h) root.controlCursor = NexusModel.STYLE_ROWS.BACKGROUND }
+                onClicked: root.openMenuRoute(NexusModel.MENU_ROUTES.background)
               }
             }
           }
 
           // ---- settings: panel cards and the game-mode strip set -----------
           Column {
-            visible: root.page === "settings"
+            visible: root.page === NexusModel.PAGE_SETTINGS
             width: parent.width
             spacing: Style.space(4)
 
@@ -2655,7 +2789,7 @@ Item {
                 foreground: Color.menu.text
                 accent: Color.accent
                 fontFamily: Style.font.family
-                hasCursor: root.controlCursor === index && root.page === "settings"
+                hasCursor: root.controlCursor === index && root.page === NexusModel.PAGE_SETTINGS
                 onHovered: function (h) { if (h) root.controlCursor = index }
                 onClicked: {
                   root.controlCursor = index
@@ -2711,7 +2845,7 @@ Item {
                 foreground: Color.menu.text
                 accent: Color.accent
                 fontFamily: Style.font.family
-                hasCursor: root.controlCursor === cursorIndex && root.page === "settings"
+                hasCursor: root.controlCursor === cursorIndex && root.page === NexusModel.PAGE_SETTINGS
                 onHovered: function (h) { if (h) root.controlCursor = cursorIndex }
                 onClicked: {
                   root.controlCursor = cursorIndex

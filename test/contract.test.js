@@ -68,8 +68,11 @@ assert.doesNotMatch(nexus, /execDetached|bash -c|sh -c/, 'no shell command strin
 // two proc samplers, three user-action game-mode/settings steps, the keys
 // fetch, sensor discovery + sampling + nvidia-smi, and cava. hyprctl
 // appears in exactly two commands (reload, binds).
-assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 10,
-  'the process inventory is pinned: a new process must be reviewed')
+assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 11,
+  'the process inventory is pinned: a new process must be reviewed (the eleventh is the user-action wl-copy)')
+assert.match(nexus, /NexusSuiteModel\.copyCommand/, 'clipboard copies build through the model')
+assert.match(nexus, /NexusSuiteModel\.parseClipboard/, 'clipboard history parses through the model')
+assert.match(nexus, /summonSibling\("omarchy\.clipboard"\)/, 'image clips defer to the full manager')
 assert.match(nexus, /command: \["mkdir", "-p", root\.gameModeDir, root\.settingsDir\]/,
   'directory creation is a fixed argument array')
 assert.match(nexus, /command: \["rm", "-f", root\.gameModeFile\]/,
@@ -87,7 +90,7 @@ assert.equal((nexus.match(/could not be started/g) || []).length, 4,
 // Escape clears the filter before it closes the panel.
 assert.match(nexus, /NexusKeybindsModel\.parseBindsText/)
 assert.match(nexus, /NexusKeybindsModel\.filterBinds/)
-assert.match(nexus, /root\.page === "keys" && root\.keysQuery !== ""/,
+assert.match(nexus, /root\.page === NexusModel\.PAGE_KEYS && root\.keysQuery !== ""/,
   'Escape clears the keys filter first')
 
 // Sensors: discovery once per open, self-labeling grep sampling, nvidia-smi
@@ -251,10 +254,10 @@ assert.match(nexus, /requestClose\(\)\s*\n\s*if \(host && typeof host\.summon ==
   'delegated actions close Nexus before opening the menu')
 assert.match(nexus, /host\.summon\("omarchy\.menu", JSON\.stringify\(\{ menu: String\(route\) \}\)\)/,
   'delegation goes through the shell menu with a fixed route')
-assert.match(nexus, /openMenuRoute\("style\.theme"\)/, 'theme routes to the existing selector')
-assert.match(nexus, /openMenuRoute\("style\.background"\)/, 'background routes to the existing selector')
-assert.match(nexus, /openMenuRoute\("trigger\.capture"\)/, 'capture delegates to the existing flow')
-assert.match(nexus, /openMenuRoute\("system"\)/,
+assert.match(nexus, /openMenuRoute\(NexusModel\.MENU_ROUTES\.theme\)/, 'theme routes to the existing selector')
+assert.match(nexus, /openMenuRoute\(NexusModel\.MENU_ROUTES\.background\)/, 'background routes to the existing selector')
+assert.match(nexus, /openMenuRoute\(NexusModel\.MENU_ROUTES\.capture\)/, 'capture delegates to the existing flow')
+assert.match(nexus, /openMenuRoute\(NexusModel\.MENU_ROUTES\.power\)/,
   'power opens the system menu, whose second click is the confirmation')
 
 // Bluetooth: native reactive adapter state, no CLI polling.
@@ -277,13 +280,13 @@ assert.match(nexus, /pageShift/, 'page content slides directionally')
 assert.match(nexus, /readonly property int lastCursorIndex/, 'the cursor is page-aware')
 assert.match(nexus, /onLastCursorIndexChanged: if \(controlCursor > lastCursorIndex\) controlCursor = lastCursorIndex/,
   'the cursor clamps when its page loses rows')
-assert.match(nexus, /hasCursor: root\.controlCursor === 0 && root\.page === "style"/,
+assert.match(nexus, /hasCursor: root\.controlCursor === NexusModel\.STYLE_ROWS\.THEME && root\.page === NexusModel\.PAGE_STYLE/,
   'style rows carry a page-scoped keyboard cursor')
-assert.match(nexus, /hasCursor: root\.controlCursor === 2 && root\.page === "overview"/,
+assert.match(nexus, /hasCursor: root\.controlCursor === NexusModel\.OVERVIEW_ROWS\.PLAYER_CHIP && root\.page === NexusModel\.PAGE_OVERVIEW/,
   'the overview player-cycle row is a cursor row')
-assert.match(nexus, /hasCursor: root\.controlCursor === 9 && root\.page === "controls"/,
+assert.match(nexus, /hasCursor: root\.controlCursor === NexusModel\.CONTROLS_ROWS\.CAPTURE && root\.page === NexusModel\.PAGE_CONTROLS/,
   'the capture row is a cursor row')
-assert.match(nexus, /hasCursor: root\.controlCursor === 10 && root\.page === "controls"/,
+assert.match(nexus, /hasCursor: root\.controlCursor === NexusModel\.CONTROLS_ROWS\.POWER && root\.page === NexusModel\.PAGE_CONTROLS/,
   'the power row is a cursor row')
 
 // Suite integrations: read-only views over sibling state files, watch-
@@ -301,7 +304,7 @@ assert.match(nexus, /clearPast/, 'history clearing goes through the first-party 
 assert.match(nexus, /running: root\.notesDirty/, 'the autosave debounce only runs while dirty')
 assert.match(nexus, /NexusSuiteModel\.GAME_MODE_PRESETS/)
 assert.match(nexus, /NexusModel\.pageIcon/, 'narrow pages render icon-only tabs')
-assert.equal((nexus.match(/hasCursor: root\.controlCursor === \d && root\.page === "style"/g) || []).length, 2,
+assert.equal((nexus.match(/hasCursor: root\.controlCursor === NexusModel\.STYLE_ROWS\.[A-Z_]+ && root\.page === NexusModel\.PAGE_STYLE/g) || []).length, 2,
   'both style rows are cursor rows')
 assert.match(nexus, /if \(event\.angleDelta\.y === 0\) return/,
   'horizontal wheel deltas never cycle pages')

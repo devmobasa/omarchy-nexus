@@ -62,5 +62,27 @@ assert.equal(model.activePreset({ gmAnimations: false, gmBlur: true, gmShadows: 
 
 assert.equal(model.notesPath(null, '/h'), '/h/.local/state/omarchy/nexus-notes.md')
 assert.equal(model.notificationsPath(null, '/h'), '/h/.local/state/omarchy/notifications.json')
+assert.equal(model.clipboardPath(null, '/h'), '/h/.local/state/omarchy/clipboard-history.json')
+
+// ---- clipboard --------------------------------------------------------------
+
+const clips = model.parseClipboard(JSON.stringify([
+  { type: 'text', text: '  hello\n world  ' },
+  { type: 'image', path: '/x.png', mime: 'image/png', capturedAt: 'Monday 00:06' },
+  { type: 'text', text: '   ' },
+  { bogus: true },
+  { type: 'text', text: 'x'.repeat(200) }
+]), 10)
+assert.equal(clips.length, 3, 'blank and malformed entries are dropped')
+assert.equal(clips[0].preview, 'hello world', 'previews flatten to one line')
+assert.equal(clips[0].text, '  hello\n world  ', 'the original text is preserved for copying')
+assert.equal(clips[1].kind, 'image')
+assert.equal(clips[1].preview, '[image] Monday 00:06')
+assert.ok(clips[2].preview.endsWith('…'), 'long previews truncate')
+assert.equal(model.parseClipboard(JSON.stringify([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }]), 1).length, 1)
+assert.deepEqual(model.parseClipboard('junk', 5), [])
+
+assert.deepEqual(model.copyCommand('some -- text'), ['wl-copy', '--', 'some -- text'],
+  'the copy is one argv element behind an argument terminator')
 
 console.log('ok - nexus suite integrations model')
