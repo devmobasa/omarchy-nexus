@@ -1,0 +1,82 @@
+#!/bin/bash
+# keepLoaded benchmark: measures cold summon latency from IPC invocation to
+# the first usable state (status() answering opened:true), then closed-state
+# shell CPU. Requires the plugin installed and enabled; leaves it closed.
+#
+# Target (PLAN-v9): p95 <= 250 ms and no recurring closed-state activity.
+# Keep keepLoaded omitted while the target is met.
+
+set -euo pipefail
+
+PLUGIN_ID=community.omarchy-nexus
+RUNS=${1:-20}
+WORKSPACE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+OUT="$WORKSPACE/test-output/keepload-benchmark-$(date +%Y%m%d-%H%M%S).txt"
+
+fail() {
+  echo "test/benchmark: $*" >&2
+  exit 1
+}
+
+command -v omarchy-shell >/dev/null || fail "omarchy-shell not in PATH"
+command -v jq >/dev/null || fail "jq is required"
+[[ $(omarchy-shell shell ping) == ok ]] || fail "shell ping failed"
+omarchy-shell shell listPlugins |
+  jq -e --arg id "$PLUGIN_ID" '[.[] | select(.id == $id and .enabled)] | length == 1' >/dev/null ||
+  fail "$PLUGIN_ID must be installed and enabled"
+
+mkdir -p "$WORKSPACE/test-output"
+
+# Start from a closed, unloaded panel.
+omarchy-shell shell hide "$PLUGIN_ID" >/dev/null 2>&1 || true
+sleep 1
+
+declare -a latencies
+for i in $(seq "$RUNS"); do
+  t0=$(date +%s%3N)
+  omarchy-shell shell summon "$PLUGIN_ID" '{}' >/dev/null
+  until [[ $(omarchy-shell shell call "$PLUGIN_ID" status "" 2>/dev/null) == *'"opened":true'* ]]; do
+    sleep 0.01
+  done
+  t1=$(date +%s%3N)
+  latencies+=($((t1 - t0)))
+  omarchy-shell shell hide "$PLUGIN_ID"
+  sleep 0.6
+done
+
+mapfile -t sorted < <(printf '%s\n' "${latencies[@]}" | sort -n)
+idx50=$(((RUNS * 50 + 99) / 100 - 1))
+idx95=$(((RUNS * 95 + 99) / 100 - 1))
+p50=${sorted[$idx50]}
+p95=${sorted[$idx95]}
+
+# Closed-state CPU of the shell process over five seconds.
+sleep 2
+pid=$(pgrep -x quickshell | head -1 || true)
+[[ -n $pid ]] || pid=$(pgrep -x qs | head -1 || true)
+cpu_line="shell process not found"
+if [[ -n $pid ]]; then
+  clk=$(getconf CLK_TCK)
+  read -r u1 s1 < <(awk '{print $14, $15}' "/proc/$pid/stat")
+  sleep 5
+  read -r u2 s2 < <(awk '{print $14, $15}' "/proc/$pid/stat")
+  ticks=$(((u2 - u1) + (s2 - s1)))
+  cpu_pct=$(awk -v t="$ticks" -v c="$clk" 'BEGIN { printf "%.2f", t / (5 * c) * 100 }')
+  cpu_line="closed-state shell CPU over 5 s: ${cpu_pct}% (pid $pid)"
+fi
+
+{
+  echo "keepLoaded benchmark — $(date -Iseconds)"
+  echo "plugin: $PLUGIN_ID  runs: $RUNS"
+  echo "latencies (ms, cold summon -> opened:true): ${latencies[*]}"
+  echo "p50: ${p50} ms"
+  echo "p95: ${p95} ms"
+  echo "$cpu_line"
+  if ((p95 <= 250)); then
+    echo "verdict: target met — keep keepLoaded omitted"
+  else
+    echo "verdict: p95 above 250 ms — consider keepLoaded with dormant closed state"
+  fi
+} | tee "$OUT"
+
+echo "report: $OUT"

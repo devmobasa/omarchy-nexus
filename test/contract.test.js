@@ -50,10 +50,47 @@ assert.match(nexus, /ToplevelManager\.activeToplevel/, 'falls back to the active
 assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or closes')
 
 // Closed-state dormancy and animation policy.
-assert.match(nexus, /running: root\.opened/, 'no timer runs while the panel is closed')
+assert.equal((nexus.match(/running: root\.opened/g) || []).length, 3,
+  'clock and both sampler timers stop while the panel is closed')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
-assert.doesNotMatch(nexus, /\bProcess\s*\{/, 'plugin spawns no subprocess in Milestone 1')
 assert.doesNotMatch(nexus, /execDetached|hyprctl|bash -c/, 'plugin builds no shell commands')
+
+// Metrics sampler contract: exactly two whitelisted argument-array commands.
+assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 2,
+  'one stat+mem sampler process and one df process, nothing else')
+assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo"\]/,
+  'cpu/mem sampling reads proc files with an argument array')
+assert.match(nexus, /command: \["df", "-P", "-k", "\/"\]/,
+  'storage sampling uses POSIX df with an argument array')
+assert.match(nexus, /NexusMetricsModel\.parseStatAndMem/, 'sampler output parses through the tested model')
+assert.match(nexus, /NexusMetricsModel\.parseDiskFree/, 'df output parses through the tested model')
+assert.match(nexus, /NexusMetricsModel\.isStale/, 'stale readings are detected, not shown as fresh')
+
+// Battery is reactive UPower state with a no-battery fallback; never polled.
+assert.match(nexus, /import Quickshell\.Services\.UPower/)
+assert.match(nexus, /UPower\.displayDevice/, 'battery state comes from the display device')
+assert.match(nexus, /NexusMetricsModel\.batteryDetail/, 'battery presence maps through the tested model')
+
+// Bar-aware geometry and internal scrolling.
+assert.match(nexus, /shell\.barConfig/, 'margins read the live bar position')
+assert.match(nexus, /barHidden/, 'a hidden bar frees its edge')
+assert.match(nexus, /edgeClearance\("top"\)/, 'each edge derives its own clearance')
+assert.match(nexus, /Flickable \{/, 'vertical overflow scrolls internally')
+assert.match(nexus, /clip: true/, 'scrolled content clips to the card')
+
+// Media adapter contract.
+assert.match(nexus, /import Quickshell\.Services\.Mpris/, 'one direct MPRIS adapter')
+assert.doesNotMatch(nexus, /omarchy\.media/, 'never polls the media service IPC in parallel')
+assert.match(nexus, /NexusMediaModel\.buildRecord/, 'records go through the tested model')
+assert.match(nexus, /NexusMediaModel\.selectPlayer/, 'selection uses the deterministic two-phase model')
+assert.match(nexus, /NexusMediaModel\.reconcileActivity/, 'activity serials follow the tested rules')
+assert.match(nexus, /NexusMediaModel\.bumpUserAction/, 'successful user actions bump the target serial')
+assert.match(nexus, /NexusMediaModel\.allowedArtUrl/, 'artwork sources pass the scheme whitelist')
+assert.match(nexus, /model: root\.opened \? root\.mprisPlayers : \[\]/,
+  'media reactivity is dormant while the panel is closed')
+assert.match(nexus, /canGoNext/, 'next is capability-gated')
+assert.match(nexus, /canGoPrevious/, 'previous is capability-gated')
+assert.match(nexus, /canPause : root\.mediaSelected\.canPlay/, 'play/pause is capability-gated')
 
 // Theme integration comes from shared tokens only.
 assert.match(nexus, /import qs\.Commons/, 'uses shared Color/Style/Border singletons')

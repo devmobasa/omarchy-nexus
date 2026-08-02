@@ -34,11 +34,15 @@ assert.equal(model.adjacentPage('style', -1), 'controls')
 assert.equal(model.adjacentPage('bogus', 1), 'overview')
 assert.equal(model.adjacentPage('', -1), 'overview')
 
-// Display helpers cover every page and fall back for invalid input.
+// Display helpers cover every page and fall back for invalid input. Pages
+// with real content use an empty placeholder; pending pages explain
+// themselves.
 for (const page of model.PAGES) {
   assert.ok(model.pageTitle(page).length > 0)
-  assert.ok(model.pagePlaceholder(page).length > 0)
 }
+assert.equal(model.pagePlaceholder('overview'), '')
+assert.ok(model.pagePlaceholder('controls').length > 0)
+assert.ok(model.pagePlaceholder('style').length > 0)
 assert.equal(model.pageTitle('bogus'), model.pageTitle(model.DEFAULT_PAGE))
 assert.equal(model.pagePlaceholder('bogus'), model.pagePlaceholder(model.DEFAULT_PAGE))
 

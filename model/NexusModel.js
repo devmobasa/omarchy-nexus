@@ -10,8 +10,10 @@ var PAGE_TITLES = {
   style: "Style"
 }
 
+// Pages with real content use the empty string: the panel hides the
+// placeholder row entirely for them.
 var PAGE_PLACEHOLDERS = {
-  overview: "Media, metrics, and battery land here in Milestone 2.",
+  overview: "",
   controls: "Audio, microphone, DND, night light, and stay awake land here in Milestone 3.",
   style: "Wallpaper and theme selectors land here in Milestone 3."
 }
