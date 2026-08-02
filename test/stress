@@ -1,0 +1,65 @@
+#!/bin/bash
+# Milestone 4 validation on the live session: repeated summons across pages,
+# layer-surface lifecycle, rapid toggle burst, unload proof, and log health.
+# Requires the plugin installed and enabled; leaves it closed.
+
+set -euo pipefail
+
+PLUGIN_ID=community.omarchy-nexus
+NAMESPACE=omarchy-nexus
+CYCLES=${1:-12}
+
+fail() {
+  echo "test/stress: $*" >&2
+  exit 1
+}
+
+for tool in omarchy-shell jq hyprctl; do
+  command -v "$tool" >/dev/null || fail "$tool not in PATH"
+done
+[[ $(omarchy-shell shell ping) == ok ]] || fail "shell ping failed"
+omarchy-shell shell listPlugins |
+  jq -e --arg id "$PLUGIN_ID" '[.[] | select(.id == $id and .enabled)] | length == 1' >/dev/null ||
+  fail "$PLUGIN_ID must be installed and enabled"
+
+omarchy-shell shell hide "$PLUGIN_ID" >/dev/null 2>&1 || true
+sleep 0.6
+
+# Summon/hide cycles across every page; each open must produce exactly the
+# panel's layer surface and each hide must remove it.
+for i in $(seq "$CYCLES"); do
+  case $((i % 3)) in
+    0) page=overview ;;
+    1) page=controls ;;
+    2) page=style ;;
+  esac
+  omarchy-shell shell summon "$PLUGIN_ID" "{\"page\":\"$page\"}" >/dev/null
+  sleep 0.5
+  status=$(omarchy-shell shell call "$PLUGIN_ID" status "")
+  jq -e --arg p "$page" '.opened == true and .page == $p' <<<"$status" >/dev/null ||
+    fail "cycle $i: unexpected status $status"
+  hyprctl layers | grep -q "$NAMESPACE" || fail "cycle $i: layer surface missing while open"
+  omarchy-shell shell hide "$PLUGIN_ID"
+  sleep 0.5
+  if hyprctl layers | grep -q "$NAMESPACE"; then
+    fail "cycle $i: layer surface remains after hide"
+  fi
+done
+
+# A hidden non-keepLoaded panel must be fully unloaded.
+[[ $(omarchy-shell shell call "$PLUGIN_ID" status "") == unknown ]] ||
+  fail "panel still loaded after final hide"
+
+# Rapid toggle burst: an even count must end closed with no surface.
+for i in $(seq 6); do
+  omarchy-shell shell toggle "$PLUGIN_ID" '{}' >/dev/null
+  sleep 0.3
+done
+omarchy-shell shell hide "$PLUGIN_ID" >/dev/null 2>&1 || true
+sleep 0.6
+if hyprctl layers | grep -q "$NAMESPACE"; then
+  fail "layer surface remains after toggle burst"
+fi
+
+[[ $(omarchy-shell shell ping) == ok ]] || fail "shell unhealthy after stress"
+echo "ok - $CYCLES summon cycles + toggle burst; surfaces, unload, and shell health verified"

@@ -1,5 +1,7 @@
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
+import Quickshell.Bluetooth
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
@@ -209,10 +211,18 @@ Item {
       idleService.setIdleEnabled(!(idleService.idleEnabled === true))
   }
 
+  // ---- bluetooth (native reactive adapter state) ---------------------------
+  readonly property var btAdapter: Bluetooth.defaultAdapter
+
+  function toggleBluetooth() {
+    if (btAdapter) btAdapter.enabled = !(btAdapter.enabled === true)
+  }
+
   // ---- controls keyboard cursor --------------------------------------------
   // Row order: 0 volume, 1 mute, 2 microphone, 3 dnd, 4 night light,
-  // 5 stay awake. -1 means the tab row owns focus.
+  // 5 stay awake, 6 bluetooth. -1 means the tab row owns focus.
   property int controlCursor: -1
+  readonly property int lastControlIndex: 6
   onPageChanged: controlCursor = -1
 
   function activateControl(index) {
@@ -221,12 +231,15 @@ Item {
     else if (index === 3) dispatchControl("dnd", toggleDnd)
     else if (index === 4) dispatchControl("night-light", toggleNightlight)
     else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
+    else if (index === 6) dispatchControl("bluetooth", toggleBluetooth)
   }
 
-  // ---- style delegation ----------------------------------------------------
-  // Wallpaper and theme actions close Nexus and open the existing Omarchy
-  // menu selector in-process; the routes are fixed strings, never user input.
-  function openStyleMenu(route) {
+  // ---- menu delegation -----------------------------------------------------
+  // Style, capture, and power actions close Nexus and open the existing
+  // Omarchy menu in-process; the routes are fixed strings, never user input.
+  // Destructive power actions get their confirming second interaction inside
+  // the menu itself.
+  function openMenuRoute(route) {
     var host = shell
     requestClose()
     if (host && typeof host.summon === "function")
@@ -405,27 +418,123 @@ Item {
     return [
       {
         label: "CPU",
-        value: !statStale && cpuValue !== null ? cpuValue + "%" : "—",
+        percent: !statStale && cpuValue !== null ? cpuValue : null,
+        stale: statStale && statSampledAt > 0,
         detail: statStale && statSampledAt > 0 ? "Stale" : "Usage"
       },
       {
         label: "Memory",
-        value: !statStale && memValue !== null ? memValue + "%" : "—",
+        percent: !statStale && memValue !== null ? memValue : null,
+        stale: statStale && statSampledAt > 0,
         detail: statStale && statSampledAt > 0 ? "Stale" : "In use"
       },
       {
         label: "Storage",
-        value: !diskStale && diskValue ? diskValue.percent + "%" : "—",
+        percent: !diskStale && diskValue ? diskValue.percent : null,
+        stale: diskStale && diskSampledAt > 0,
         detail: !diskStale && diskValue
           ? NexusMetricsModel.formatGib(diskValue.availableKb) + " free on " + diskValue.mount
           : (diskStale && diskSampledAt > 0 ? "Stale" : "Used on /")
       },
       {
         label: "Battery",
-        value: batteryPresent ? batteryPercent + "%" : "—",
+        percent: batteryPresent ? batteryPercent : null,
+        stale: false,
         detail: NexusMetricsModel.batteryDetail(batteryPresent, UPower.onBattery, batteryPercent)
       }
     ]
+  }
+
+  // ---- arc meter (declarative Shapes; no Canvas repaints) ------------------
+  component ArcMeter: Item {
+    id: meter
+    property string label: ""
+    property var percent: null
+    property bool stale: false
+    property string detail: ""
+    implicitHeight: meterColumn.implicitHeight
+
+    readonly property color trackColor: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.12)
+    readonly property color valueColor: stale || percent === null
+      ? Qt.darker(Color.menu.text, 1.6) : Color.accent
+
+    Column {
+      id: meterColumn
+      anchors.left: parent.left
+      anchors.right: parent.right
+      spacing: Style.space(4)
+
+      Item {
+        width: Style.space(64)
+        height: Style.space(64)
+        anchors.horizontalCenter: parent.horizontalCenter
+
+        Shape {
+          id: arcShape
+          anchors.fill: parent
+
+          ShapePath {
+            strokeWidth: Style.space(5)
+            strokeColor: meter.trackColor
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+
+            PathAngleArc {
+              centerX: arcShape.width / 2
+              centerY: arcShape.height / 2
+              radiusX: arcShape.width / 2 - Style.space(4)
+              radiusY: arcShape.height / 2 - Style.space(4)
+              startAngle: 135
+              sweepAngle: 270
+            }
+          }
+
+          ShapePath {
+            strokeWidth: Style.space(5)
+            strokeColor: meter.valueColor
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+
+            PathAngleArc {
+              centerX: arcShape.width / 2
+              centerY: arcShape.height / 2
+              radiusX: arcShape.width / 2 - Style.space(4)
+              radiusY: arcShape.height / 2 - Style.space(4)
+              startAngle: 135
+              sweepAngle: meter.percent === null ? 0
+                : 270 * Math.min(100, Math.max(0, meter.percent)) / 100
+            }
+          }
+        }
+
+        Text {
+          anchors.centerIn: parent
+          text: meter.percent === null ? "—" : meter.percent + "%"
+          color: Color.menu.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+        }
+      }
+
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: meter.label
+        color: Color.menu.text
+        font.family: Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+      }
+      Text {
+        width: parent.width
+        horizontalAlignment: Text.AlignHCenter
+        text: meter.detail
+        color: Qt.darker(Color.menu.text, 1.4)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideMiddle
+      }
+    }
   }
 
   // If the target output disappears while open, retarget; close when no real
@@ -483,7 +592,10 @@ Item {
       anchors.top: parent.top
       anchors.rightMargin: edgeClearance("right")
       anchors.topMargin: edgeClearance("top")
-      width: Math.min(Style.space(420), Math.min(Math.floor(panel.width * 0.42),
+      // Preferred width stays inside the 360-560 logical-pixel band even
+      // when the theme spacing scale inflates Style.space().
+      readonly property int preferredWidth: Math.min(Style.space(420), 560)
+      width: Math.min(preferredWidth, Math.min(Math.floor(panel.width * 0.42),
         panel.width - edgeClearance("left") - edgeClearance("right")))
 
       // Content-fitted height up to the safe maximum; overflow scrolls inside.
@@ -523,7 +635,7 @@ Item {
             root.requestClose()
             event.accepted = true
           } else if (event.key === Qt.Key_Down && onControls) {
-            root.controlCursor = Math.min(root.controlCursor + 1, 5)
+            root.controlCursor = Math.min(root.controlCursor + 1, root.lastControlIndex)
             event.accepted = true
           } else if (event.key === Qt.Key_Up && onControls && root.controlCursor >= 0) {
             root.controlCursor = root.controlCursor - 1
@@ -558,30 +670,75 @@ Item {
           anchors.top: parent.top
           spacing: Style.spacing.md
 
-          // ---- hero: time and workspace context ---------------------------
-          Column {
+          // ---- hero: time, workspace context, media artwork ---------------
+          Row {
             width: parent.width
-            spacing: Style.space(2)
+            spacing: Style.spacing.md
 
-            Text {
-              text: Qt.formatTime(root.now, "HH:mm")
-              color: Color.menu.text
-              font.family: Style.font.family
-              font.pixelSize: Style.font.displayLarge
-              font.bold: true
+            Column {
+              width: parent.width - (heroArt.visible ? heroArt.width + Style.spacing.md : 0)
+              spacing: Style.space(2)
+              anchors.verticalCenter: parent.verticalCenter
+
+              Text {
+                text: Qt.formatTime(root.now, "HH:mm")
+                color: Color.accent
+                font.family: Style.font.family
+                font.pixelSize: Style.font.displayLarge
+                font.bold: true
+              }
+              Text {
+                text: Qt.formatDate(root.now, "dddd, MMMM d")
+                color: Qt.darker(Color.menu.text, 1.3)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                visible: text.length > 0
+                text: root.workspaceLabel
+                color: Qt.darker(Color.menu.text, 1.5)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
             }
-            Text {
-              text: Qt.formatDate(root.now, "dddd, MMMM d")
-              color: Qt.darker(Color.menu.text, 1.3)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-            }
-            Text {
-              visible: text.length > 0
-              text: root.workspaceLabel
-              color: Qt.darker(Color.menu.text, 1.5)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
+
+            Rectangle {
+              id: heroArt
+              visible: root.settings.showMedia
+              width: Style.space(72)
+              height: Style.space(72)
+              radius: Style.cornerRadius
+              anchors.verticalCenter: parent.verticalCenter
+              color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.06)
+              clip: true
+              // Restrained accent glow while something is playing.
+              border.width: 1
+              border.color: root.mediaSelected && root.mediaSelected.isPlaying
+                ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.65)
+                : Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10)
+
+              Image {
+                id: artwork
+                anchors.fill: parent
+                anchors.margins: 1
+                asynchronous: true
+                fillMode: Image.PreserveAspectCrop
+                sourceSize.width: Style.space(144)
+                sourceSize.height: Style.space(144)
+                source: root.mediaSelected
+                  ? NexusMediaModel.allowedArtUrl(root.mediaSelected.trackArtUrl || "")
+                  : ""
+                visible: status === Image.Ready
+              }
+
+              Text {
+                anchors.centerIn: parent
+                visible: !artwork.visible
+                text: "󰝚"
+                color: Qt.darker(Color.menu.text, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.iconLarge
+              }
             }
           }
 
@@ -621,40 +778,8 @@ Item {
               anchors.rightMargin: Style.space(12)
               spacing: Style.space(12)
 
-              Rectangle {
-                id: artworkFrame
-                width: Style.space(56)
-                height: Style.space(56)
-                radius: Style.cornerRadius
-                color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.06)
-                clip: true
-                anchors.verticalCenter: parent.verticalCenter
-
-                Image {
-                  id: artwork
-                  anchors.fill: parent
-                  asynchronous: true
-                  fillMode: Image.PreserveAspectCrop
-                  sourceSize.width: Style.space(112)
-                  sourceSize.height: Style.space(112)
-                  source: root.mediaSelected
-                    ? NexusMediaModel.allowedArtUrl(root.mediaSelected.trackArtUrl || "")
-                    : ""
-                  visible: status === Image.Ready
-                }
-
-                Text {
-                  anchors.centerIn: parent
-                  visible: !artwork.visible
-                  text: "󰝚"
-                  color: Qt.darker(Color.menu.text, 1.4)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.iconLarge
-                }
-              }
-
               Column {
-                width: parent.width - artworkFrame.width - controlsRow.width - Style.space(24)
+                width: parent.width - controlsRow.width - Style.space(12)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(2)
 
@@ -715,46 +840,13 @@ Item {
             Repeater {
               model: root.metricCards
 
-              BorderSurface {
+              ArcMeter {
                 required property var modelData
                 width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
-                implicitHeight: metricColumn.implicitHeight + Style.spacing.rowPaddingX * 2
-                radius: Style.cornerRadius
-                color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
-                borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
-
-                Column {
-                  id: metricColumn
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.leftMargin: Style.space(12)
-                  anchors.rightMargin: Style.space(12)
-                  spacing: Style.space(2)
-
-                  Text {
-                    text: modelData.label
-                    color: Qt.darker(Color.menu.text, 1.5)
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                  }
-                  Text {
-                    text: modelData.value
-                    color: Color.menu.text
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.heading
-                    font.bold: true
-                  }
-                  Text {
-                    width: parent.width
-                    text: modelData.detail
-                    color: Qt.darker(Color.menu.text, 1.4)
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                }
+                label: modelData.label
+                percent: modelData.percent
+                stale: modelData.stale
+                detail: modelData.detail
               }
             }
           }
@@ -903,6 +995,40 @@ Item {
                 root.dispatchControl("stay-awake", root.toggleStayAwake)
               }
             }
+
+            Toggle {
+              width: parent.width
+              label: "Bluetooth"
+              description: root.btAdapter ? "Power the default Bluetooth adapter." : "No Bluetooth adapter."
+              enabled: root.btAdapter !== null && root.pendingActionName === ""
+              checked: root.btAdapter !== null && root.btAdapter.enabled === true
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 6
+              onHovered: function (h) { if (h) root.controlCursor = 6 }
+              onClicked: {
+                root.controlCursor = 6
+                root.dispatchControl("bluetooth", root.toggleBluetooth)
+              }
+            }
+          }
+
+          // ---- controls: capture and power quick actions ------------------
+          Row {
+            visible: root.page === "controls"
+            spacing: Style.spacing.controlGap
+
+            Button {
+              iconText: ""
+              text: "Capture"
+              onClicked: root.openMenuRoute("trigger.capture")
+            }
+            Button {
+              iconText: "󰐥"
+              text: "Power"
+              onClicked: root.openMenuRoute("system")
+            }
           }
 
           // ---- style: delegate to the existing selectors ------------------
@@ -926,12 +1052,12 @@ Item {
               Button {
                 iconText: "󰸌"
                 text: "Theme"
-                onClicked: root.openStyleMenu("style.theme")
+                onClicked: root.openMenuRoute("style.theme")
               }
               Button {
                 iconText: ""
                 text: "Background"
-                onClicked: root.openStyleMenu("style.background")
+                onClicked: root.openMenuRoute("style.background")
               }
             }
           }

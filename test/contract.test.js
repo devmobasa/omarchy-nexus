@@ -115,13 +115,28 @@ assert.match(nexus, /settings\.preferredMediaIdentity, mediaSerials\)/,
 assert.match(nexus, /root\.settings\.showMedia/, 'showMedia gates the media card')
 assert.match(nexus, /root\.settings\.showMetrics/, 'showMetrics gates the metric grid')
 
-// Style delegation: close first, then open the Omarchy selector in-process.
+// Menu delegation: close first, then open the Omarchy menu in-process.
 assert.match(nexus, /requestClose\(\)\s*\n\s*if \(host && typeof host\.summon === "function"\)/,
-  'style actions close Nexus before delegating')
+  'delegated actions close Nexus before opening the menu')
 assert.match(nexus, /host\.summon\("omarchy\.menu", JSON\.stringify\(\{ menu: String\(route\) \}\)\)/,
   'delegation goes through the shell menu with a fixed route')
-assert.match(nexus, /openStyleMenu\("style\.theme"\)/, 'theme routes to the existing selector')
-assert.match(nexus, /openStyleMenu\("style\.background"\)/, 'background routes to the existing selector')
+assert.match(nexus, /openMenuRoute\("style\.theme"\)/, 'theme routes to the existing selector')
+assert.match(nexus, /openMenuRoute\("style\.background"\)/, 'background routes to the existing selector')
+assert.match(nexus, /openMenuRoute\("trigger\.capture"\)/, 'capture delegates to the existing flow')
+assert.match(nexus, /openMenuRoute\("system"\)/,
+  'power opens the system menu, whose second click is the confirmation')
+
+// Bluetooth: native reactive adapter state, no CLI polling.
+assert.match(nexus, /import Quickshell\.Bluetooth/)
+assert.match(nexus, /Bluetooth\.defaultAdapter/, 'bluetooth reads the default adapter reactively')
+assert.match(nexus, /No Bluetooth adapter/, 'missing adapter shows its reason')
+
+// Beauty pass: bounded width, accent-restrained hero, declarative arc meters.
+assert.match(nexus, /Math\.min\(Style\.space\(420\), 560\)/,
+  'preferred width stays inside the 360-560 logical band under spacing scale')
+assert.match(nexus, /component ArcMeter: Item/, 'metrics render as arc meters')
+assert.match(nexus, /PathAngleArc/, 'arcs are declarative Shapes, not Canvas repaints')
+assert.doesNotMatch(nexus, /\bCanvas\s*\{/, 'no Canvas repaint loops')
 
 // Theme integration comes from shared tokens only.
 assert.match(nexus, /import qs\.Commons/, 'uses shared Color/Style/Border singletons')
