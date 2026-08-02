@@ -1,0 +1,23 @@
+#!/bin/bash
+# Static validation: manifest, pure models, contract checks, and QML lint.
+# Never mutates the primary session; safe for local runs and CI.
+
+set -euo pipefail
+
+PLUGIN_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+OMARCHY_SOURCE=${OMARCHY_PATH:-/usr/share/omarchy}
+
+[[ -d $OMARCHY_SOURCE/shell ]] || {
+  echo "Omarchy shell source not found: $OMARCHY_SOURCE" >&2
+  exit 1
+}
+
+for test_file in "$PLUGIN_DIR"/test/*.test.js; do
+  node "$test_file"
+done
+
+OMARCHY_PATH="$OMARCHY_SOURCE" omarchy plugin validate "$PLUGIN_DIR"
+
+qmllint -I "$OMARCHY_SOURCE/shell" "$PLUGIN_DIR/Nexus.qml"
+
+echo "ok - nexus manifest and QML"

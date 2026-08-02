@@ -1,0 +1,118 @@
+#!/bin/bash
+# Guarded live check on the primary session.
+#
+# Stages a fresh copy into the live third-party plugin directory, enables it,
+# runs bounded summon checks, then disables and removes it again. Refuses to
+# run unless explicitly confirmed, Nexus is entirely absent, and the shell is
+# healthy. shell.json is byte-backed-up first and never blindly restored:
+# cleanup removes only the run-created Nexus entry and reports any other
+# difference instead of overwriting it.
+
+set -euo pipefail
+
+PLUGIN_ID=community.omarchy-nexus
+WORKSPACE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+TARGET="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+SHELL_JSON="$HOME/.config/omarchy/shell.json"
+OUT_DIR="$WORKSPACE/test-output"
+STAMP=$(date +%Y%m%d-%H%M%S)
+
+fail() {
+  echo "test/live: $*" >&2
+  exit 1
+}
+
+[[ ${1:-} == --confirm-live ]] || fail "refusing: pass --confirm-live to mutate the primary session"
+
+command -v omarchy-shell >/dev/null || fail "omarchy-shell not in PATH"
+command -v jq >/dev/null || fail "jq is required"
+
+[[ $(omarchy-shell shell ping) == ok ]] || fail "shell ping failed"
+
+locked=$(omarchy-shell lock isLocked 2>/dev/null || echo false)
+[[ $locked != true ]] || fail "screen is locked"
+
+update_lock="${XDG_RUNTIME_DIR:-/tmp}/omarchy-update.lock"
+if [[ -f $update_lock ]] && ! flock -n "$update_lock" true 2>/dev/null; then
+  fail "an Omarchy update holds $update_lock"
+fi
+
+# Fresh-only: refuse when any trace of Nexus already exists. This run must
+# never replace, back up, or remove a real installation.
+[[ ! -e $TARGET ]] || fail "$TARGET already exists; refusing to touch an existing installation"
+if [[ -f $SHELL_JSON ]]; then
+  jq -e --arg id "$PLUGIN_ID" '[.plugins[]? | select(.id == $id)] | length == 0' "$SHELL_JSON" >/dev/null ||
+    fail "$PLUGIN_ID already present in shell.json"
+fi
+omarchy-shell shell listPlugins | jq -e --arg id "$PLUGIN_ID" '[.[] | select(.id == $id)] | length == 0' >/dev/null ||
+  fail "$PLUGIN_ID already known to the live registry"
+
+mkdir -p "$OUT_DIR"
+BACKUP=""
+if [[ -f $SHELL_JSON ]]; then
+  BACKUP="$OUT_DIR/shell.json.$STAMP.backup"
+  cp -- "$SHELL_JSON" "$BACKUP"
+  echo "shell.json backed up to $BACKUP"
+fi
+
+cleanup() {
+  status=$?
+  trap - EXIT INT TERM
+  set +e
+  omarchy-shell shell setPluginEnabled "$PLUGIN_ID" false >/dev/null 2>&1
+  rm -rf -- "$TARGET"
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1
+  if [[ -f $SHELL_JSON ]] && ! jq -e --arg id "$PLUGIN_ID" '[.plugins[]? | select(.id == $id)] | length == 0' "$SHELL_JSON" >/dev/null 2>&1; then
+    echo "test/live: WARNING: a $PLUGIN_ID entry is still present in $SHELL_JSON" >&2
+    status=1
+  fi
+  if [[ -n $BACKUP && -f $SHELL_JSON ]] && ! cmp -s "$BACKUP" "$SHELL_JSON"; then
+    echo "test/live: note: shell.json differs from the pre-run backup ($BACKUP)." >&2
+    echo "test/live: inspect the diff before deleting the backup; nothing was auto-restored." >&2
+  fi
+  if [[ $status -eq 0 ]]; then
+    echo "ok - live summon checks passed and the session is clean"
+  else
+    echo "test/live: finished with status $status" >&2
+  fi
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+echo "staging $TARGET"
+mkdir -p -- "$(dirname -- "$TARGET")"
+mkdir -- "$TARGET"
+cp -RP -- "$WORKSPACE"/. "$TARGET"/
+rm -rf -- "$TARGET/.git" "$TARGET/test-output"
+
+omarchy-shell shell rescanPlugins >/dev/null
+[[ $(omarchy-shell shell setPluginEnabled "$PLUGIN_ID" true) == ok ]] || fail "enable failed"
+
+# Bounded checks: cold summon, status, page-switching repeat summon, hide.
+[[ $(omarchy-shell shell summon "$PLUGIN_ID" '{}') == ok ]] || fail "summon failed"
+sleep 1
+status_json=$(omarchy-shell shell call "$PLUGIN_ID" status "")
+echo "status: $status_json"
+jq -e '.opened == true and .page == "overview"' <<<"$status_json" >/dev/null ||
+  fail "unexpected status after cold summon"
+
+omarchy-shell shell summon "$PLUGIN_ID" '{"page":"controls"}' >/dev/null
+sleep 0.5
+status_json=$(omarchy-shell shell call "$PLUGIN_ID" status "")
+jq -e '.opened == true and .page == "controls"' <<<"$status_json" >/dev/null ||
+  fail "repeated summon did not switch pages"
+
+omarchy-shell shell summon "$PLUGIN_ID" 'not json at all' >/dev/null
+sleep 0.5
+status_json=$(omarchy-shell shell call "$PLUGIN_ID" status "")
+jq -e '.opened == true and .page == "overview"' <<<"$status_json" >/dev/null ||
+  fail "malformed payload did not normalize to overview"
+
+omarchy-shell shell hide "$PLUGIN_ID"
+sleep 0.5
+
+# A hidden non-keepLoaded panel unloads; call must now answer "unknown".
+[[ $(omarchy-shell shell call "$PLUGIN_ID" status "") == unknown ]] ||
+  fail "panel still loaded after hide"
+
+echo "live checks passed; cleanup runs next"

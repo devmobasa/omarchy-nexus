@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "community.omarchy-nexus",
+  "name": "Omarchy Nexus",
+  "version": "0.1.0",
+  "author": "Omarchy Community",
+  "description": "A themed desktop cockpit for media, system state, controls, and style",
+  "license": "MIT",
+  "kinds": ["panel"],
+  "entryPoints": {
+    "panel": "Nexus.qml"
+  }
+}
