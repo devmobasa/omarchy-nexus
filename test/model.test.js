@@ -25,6 +25,14 @@ assert.deepEqual(model.normalizePayload('{"page":["controls"]}'), { page: 'overv
 assert.deepEqual(model.normalizePayload('{"page":"controls","command":"rm -rf /"}'),
   { page: 'controls' })
 
+// The defaultPage setting applies only when the payload names no valid page.
+assert.deepEqual(model.normalizePayload('{}', 'controls'), { page: 'controls' })
+assert.deepEqual(model.normalizePayload('not json', 'style'), { page: 'style' })
+assert.deepEqual(model.normalizePayload('{"page":"overview"}', 'controls'), { page: 'overview' })
+assert.deepEqual(model.normalizePayload('{"page":"bogus"}', 'style'), { page: 'style' })
+assert.deepEqual(model.normalizePayload('{}', 'bogus'), { page: 'overview' },
+  'an invalid fallback cannot smuggle in an unknown page')
+
 // Tab cycling wraps in both directions and recovers from invalid state.
 assert.equal(model.adjacentPage('overview', 1), 'controls')
 assert.equal(model.adjacentPage('controls', 1), 'style')
@@ -34,15 +42,12 @@ assert.equal(model.adjacentPage('style', -1), 'controls')
 assert.equal(model.adjacentPage('bogus', 1), 'overview')
 assert.equal(model.adjacentPage('', -1), 'overview')
 
-// Display helpers cover every page and fall back for invalid input. Pages
-// with real content use an empty placeholder; pending pages explain
-// themselves.
+// Display helpers cover every page and fall back for invalid input. Every
+// page has real content now, so all placeholders are empty.
 for (const page of model.PAGES) {
   assert.ok(model.pageTitle(page).length > 0)
+  assert.equal(model.pagePlaceholder(page), '')
 }
-assert.equal(model.pagePlaceholder('overview'), '')
-assert.ok(model.pagePlaceholder('controls').length > 0)
-assert.ok(model.pagePlaceholder('style').length > 0)
 assert.equal(model.pageTitle('bogus'), model.pageTitle(model.DEFAULT_PAGE))
 assert.equal(model.pagePlaceholder('bogus'), model.pagePlaceholder(model.DEFAULT_PAGE))
 

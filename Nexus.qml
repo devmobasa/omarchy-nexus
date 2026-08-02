@@ -4,12 +4,14 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import Quickshell.Services.Mpris
+import Quickshell.Services.Pipewire
 import Quickshell.Services.UPower
 import qs.Commons
 import qs.Ui
 import "model/NexusModel.js" as NexusModel
 import "model/NexusMediaModel.js" as NexusMediaModel
 import "model/NexusMetricsModel.js" as NexusMetricsModel
+import "model/NexusSettingsModel.js" as NexusSettingsModel
 
 Item {
   id: root
@@ -27,18 +29,43 @@ Item {
 
   // The sampler runs exactly while the panel is open.
   readonly property bool metricsActive: opened
-  readonly property var pendingAction: null
-  readonly property string focusRole: "tab"
+  readonly property string focusRole: controlCursor >= 0 ? "control" : "tab"
+
+  // ---- validated settings (never written during open) ----------------------
+  readonly property var settings: NexusSettingsModel.readSettings(
+    shell && shell.shellConfig ? shell.shellConfig.plugins : null,
+    manifest && manifest.id ? manifest.id : "community.omarchy-nexus",
+    NexusModel.PAGES)
+
+  // ---- serialized pending actions ------------------------------------------
+  // One control action at a time: the pending window blocks overlapping
+  // dispatch and clears after the reactive state has had time to refresh.
+  property string pendingActionName: ""
+  readonly property var pendingAction: pendingActionName === "" ? null : pendingActionName
+
+  function dispatchControl(name, action) {
+    if (!opened || pendingActionName !== "") return
+    pendingActionName = name
+    action()
+    pendingClearTimer.restart()
+  }
+
+  Timer {
+    id: pendingClearTimer
+    interval: 400
+    onTriggered: root.pendingActionName = ""
+  }
 
   // The host marks the plugin open before delivering open() and ignores the
   // return value, so every call must end with a visible surface. A repeated
   // open while visible updates page and target screen without a new surface.
   function open(payloadJson) {
-    var normalized = NexusModel.normalizePayload(payloadJson)
+    var normalized = NexusModel.normalizePayload(payloadJson, root.settings.defaultPage)
     root.page = normalized.page
     root.targetScreen = targetScreenForOpen()
     root.now = new Date()
     root.opened = true
+    refreshServices()
     refreshMedia()
     Qt.callLater(function () {
       if (root.opened) keyCatcher.forceActiveFocus()
@@ -52,6 +79,8 @@ Item {
     root.opened = false
     root.targetScreen = null
     root.mediaSelected = null
+    root.controlCursor = -1
+    root.pendingActionName = ""
     closingFromHost = false
   }
 
@@ -78,6 +107,12 @@ Item {
 
   function targetScreenForOpen() {
     var screens = Quickshell.screens || []
+    var wanted = root.settings.monitor
+    if (wanted && wanted !== "focused") {
+      for (var w = 0; w < screens.length; w++) {
+        if (String(screens[w].name || "") === wanted) return screens[w]
+      }
+    }
     var focused = Hyprland.focusedMonitor
     for (var i = 0; i < screens.length; i++) {
       var monitor = Hyprland.monitorFor(screens[i])
@@ -99,6 +134,17 @@ Item {
     return parts.join(" · ")
   }
 
+  // Shared bar shim for PanelSlider, which styles itself from a bar object.
+  readonly property var sliderBar: QtObject {
+    readonly property color foreground: Color.menu.text
+    readonly property color background: Color.menu.background
+    readonly property color urgent: Color.urgent
+    readonly property string fontFamily: Style.font.family
+    readonly property string position: "top"
+    readonly property bool vertical: false
+    readonly property int barSize: 26
+  }
+
   // Clock state is owned here so closed-state activity is provably zero: the
   // timer only runs while the panel is open.
   property date now: new Date()
@@ -107,6 +153,84 @@ Item {
     interval: 1000
     repeat: true
     onTriggered: root.now = new Date()
+  }
+
+  // ---- first-party reactive services ---------------------------------------
+  // Resolved at each open. These are keepLoaded services; when one is absent
+  // its control shows the unavailable reason instead of an action.
+  property var dndService: null
+  property var nightlightService: null
+  property var idleService: null
+
+  function refreshServices() {
+    var host = shell && typeof shell.serviceFor === "function" ? shell : null
+    dndService = host ? host.serviceFor("omarchy.notifications") : null
+    nightlightService = host ? host.serviceFor("omarchy.nightlight") : null
+    idleService = host ? host.serviceFor("omarchy.idle") : null
+  }
+
+  // ---- audio (reactive PipeWire state; one action path) --------------------
+  readonly property var audioSink: Pipewire.defaultAudioSink
+  readonly property var audioSource: Pipewire.defaultAudioSource
+  readonly property real outputVolume: audioSink && audioSink.audio ? audioSink.audio.volume : 0
+  readonly property bool outputMuted: audioSink && audioSink.audio ? audioSink.audio.muted === true : false
+  readonly property bool inputMuted: audioSource && audioSource.audio ? audioSource.audio.muted === true : false
+
+  // PipeWire node properties stay bound only while the panel is open.
+  PwObjectTracker {
+    objects: root.opened ? [root.audioSink, root.audioSource].filter(Boolean) : []
+  }
+
+  function setOutputVolume(value) {
+    if (audioSink && audioSink.audio)
+      audioSink.audio.volume = Math.max(0, Math.min(1, Number(value) || 0))
+  }
+
+  function toggleOutputMute() {
+    if (audioSink && audioSink.audio) audioSink.audio.muted = !audioSink.audio.muted
+  }
+
+  function toggleInputMute() {
+    if (audioSource && audioSource.audio) audioSource.audio.muted = !audioSource.audio.muted
+  }
+
+  function toggleDnd() {
+    if (dndService && typeof dndService.setDoNotDisturb === "function")
+      dndService.setDoNotDisturb(!(dndService.doNotDisturb === true))
+  }
+
+  function toggleNightlight() {
+    if (nightlightService && typeof nightlightService.toggle === "function")
+      nightlightService.toggle()
+  }
+
+  function toggleStayAwake() {
+    if (idleService && typeof idleService.setIdleEnabled === "function")
+      idleService.setIdleEnabled(!(idleService.idleEnabled === true))
+  }
+
+  // ---- controls keyboard cursor --------------------------------------------
+  // Row order: 0 volume, 1 mute, 2 microphone, 3 dnd, 4 night light,
+  // 5 stay awake. -1 means the tab row owns focus.
+  property int controlCursor: -1
+  onPageChanged: controlCursor = -1
+
+  function activateControl(index) {
+    if (index === 1) dispatchControl("mute-output", toggleOutputMute)
+    else if (index === 2) dispatchControl("mute-microphone", toggleInputMute)
+    else if (index === 3) dispatchControl("dnd", toggleDnd)
+    else if (index === 4) dispatchControl("night-light", toggleNightlight)
+    else if (index === 5) dispatchControl("stay-awake", toggleStayAwake)
+  }
+
+  // ---- style delegation ----------------------------------------------------
+  // Wallpaper and theme actions close Nexus and open the existing Omarchy
+  // menu selector in-process; the routes are fixed strings, never user input.
+  function openStyleMenu(route) {
+    var host = shell
+    requestClose()
+    if (host && typeof host.summon === "function")
+      host.summon("omarchy.menu", JSON.stringify({ menu: String(route) }))
   }
 
   // ---- media adapter -------------------------------------------------------
@@ -150,7 +274,7 @@ Item {
     var activity = NexusMediaModel.reconcileActivity(mediaSerials, recordsList, mediaLastSerial)
     mediaSerials = activity.serials
     mediaLastSerial = activity.lastSerial
-    var chosen = NexusMediaModel.selectPlayer(recordsList, "", mediaSerials)
+    var chosen = NexusMediaModel.selectPlayer(recordsList, settings.preferredMediaIdentity, mediaSerials)
     var next = null
     if (chosen) {
       for (var j = 0; j < players.length; j++) {
@@ -394,8 +518,23 @@ Item {
         focus: true
 
         Keys.onPressed: function (event) {
+          var onControls = root.page === "controls"
           if (event.key === Qt.Key_Escape) {
             root.requestClose()
+            event.accepted = true
+          } else if (event.key === Qt.Key_Down && onControls) {
+            root.controlCursor = Math.min(root.controlCursor + 1, 5)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Up && onControls && root.controlCursor >= 0) {
+            root.controlCursor = root.controlCursor - 1
+            event.accepted = true
+          } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+              || event.key === Qt.Key_Space) && onControls && root.controlCursor >= 0) {
+            root.activateControl(root.controlCursor)
+            event.accepted = true
+          } else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right)
+              && onControls && root.controlCursor === 0) {
+            root.setOutputVolume(root.outputVolume + (event.key === Qt.Key_Left ? -0.05 : 0.05))
             event.accepted = true
           } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
             root.page = NexusModel.adjacentPage(root.page, -1)
@@ -466,7 +605,7 @@ Item {
 
           // ---- overview: media card ---------------------------------------
           BorderSurface {
-            visible: root.page === "overview"
+            visible: root.page === "overview" && root.settings.showMedia
             width: parent.width
             implicitHeight: mediaRow.implicitHeight + Style.spacing.rowPaddingX * 2
             radius: Style.cornerRadius
@@ -567,7 +706,7 @@ Item {
 
           // ---- overview: metric cards -------------------------------------
           Grid {
-            visible: root.page === "overview"
+            visible: root.page === "overview" && root.settings.showMetrics
             width: parent.width
             columns: width < Style.space(300) ? 1 : 2
             columnSpacing: Style.spacing.md
@@ -616,6 +755,183 @@ Item {
                     elide: Text.ElideRight
                   }
                 }
+              }
+            }
+          }
+
+          // ---- controls: volume slider ------------------------------------
+          CursorSurface {
+            visible: root.page === "controls"
+            width: parent.width
+            implicitHeight: volumeRow.implicitHeight + Style.spacing.rowPaddingX * 2
+            outline: true
+            foreground: Color.menu.text
+            hasCursor: root.controlCursor === 0
+
+            HoverHandler {
+              onHoveredChanged: if (hovered) root.controlCursor = 0
+            }
+
+            Row {
+              id: volumeRow
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(12)
+              spacing: Style.space(10)
+
+              Text {
+                text: root.outputMuted ? "󰝟" : "󰕾"
+                color: Color.menu.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.heading
+                width: Style.space(24)
+                horizontalAlignment: Text.AlignHCenter
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              PanelSlider {
+                id: volumeSlider
+                bar: root.sliderBar
+                width: parent.width - Style.space(80)
+                anchors.verticalCenter: parent.verticalCenter
+                enabled: root.audioSink !== null
+                value: root.outputVolume
+                onMoved: function (v) { root.setOutputVolume(v) }
+              }
+
+              Text {
+                text: Math.round((volumeSlider.dragging ? volumeSlider.liveValue : root.outputVolume) * 100) + "%"
+                color: Color.menu.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+                width: Style.space(38)
+                horizontalAlignment: Text.AlignRight
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
+
+          // ---- controls: toggles ------------------------------------------
+          Column {
+            visible: root.page === "controls"
+            width: parent.width
+            spacing: Style.space(4)
+
+            Toggle {
+              width: parent.width
+              label: "Mute output"
+              description: root.audioSink ? "Silence the default output device." : "No output device available."
+              enabled: root.audioSink !== null && root.pendingActionName === ""
+              checked: root.outputMuted
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 1
+              onHovered: function (h) { if (h) root.controlCursor = 1 }
+              onClicked: {
+                root.controlCursor = 1
+                root.dispatchControl("mute-output", root.toggleOutputMute)
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Mute microphone"
+              description: root.audioSource ? "Silence the default input device." : "No input device available."
+              enabled: root.audioSource !== null && root.pendingActionName === ""
+              checked: root.inputMuted
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 2
+              onHovered: function (h) { if (h) root.controlCursor = 2 }
+              onClicked: {
+                root.controlCursor = 2
+                root.dispatchControl("mute-microphone", root.toggleInputMute)
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Do not disturb"
+              description: root.dndService ? "Silence notification popups." : "Notifications service unavailable."
+              enabled: root.dndService !== null && root.pendingActionName === ""
+              checked: root.dndService !== null && root.dndService.doNotDisturb === true
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 3
+              onHovered: function (h) { if (h) root.controlCursor = 3 }
+              onClicked: {
+                root.controlCursor = 3
+                root.dispatchControl("dnd", root.toggleDnd)
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Night light"
+              description: root.nightlightService ? "Warm the display color temperature." : "Night light service unavailable."
+              enabled: root.nightlightService !== null && root.pendingActionName === ""
+              checked: root.nightlightService !== null && root.nightlightService.enabled === true
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 4
+              onHovered: function (h) { if (h) root.controlCursor = 4 }
+              onClicked: {
+                root.controlCursor = 4
+                root.dispatchControl("night-light", root.toggleNightlight)
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Stay awake"
+              description: root.idleService ? "Prevent idle lock and screen off." : "Idle service unavailable."
+              enabled: root.idleService !== null && root.pendingActionName === ""
+              checked: root.idleService !== null && root.idleService.idleEnabled === false
+              foreground: Color.menu.text
+              accent: Color.accent
+              fontFamily: Style.font.family
+              hasCursor: root.controlCursor === 5
+              onHovered: function (h) { if (h) root.controlCursor = 5 }
+              onClicked: {
+                root.controlCursor = 5
+                root.dispatchControl("stay-awake", root.toggleStayAwake)
+              }
+            }
+          }
+
+          // ---- style: delegate to the existing selectors ------------------
+          Column {
+            visible: root.page === "style"
+            width: parent.width
+            spacing: Style.spacing.md
+
+            Text {
+              width: parent.width
+              text: "Style actions close Nexus and open the Omarchy selector."
+              color: Qt.darker(Color.menu.text, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            Row {
+              spacing: Style.spacing.controlGap
+
+              Button {
+                iconText: "󰸌"
+                text: "Theme"
+                onClicked: root.openStyleMenu("style.theme")
+              }
+              Button {
+                iconText: ""
+                text: "Background"
+                onClicked: root.openStyleMenu("style.background")
               }
             }
           }

@@ -307,11 +307,31 @@ Implemented and live-verified on the primary session:
   p50 84 ms, p95 88 ms against the 250 ms target; closed-state shell CPU
   0.00% over 5 s. keepLoaded stays omitted.
 
-### Milestone 3 — controls and style
+### Milestone 3 — controls and style (complete)
 
-Reactive controls (audio, microphone, DND, night light, stay awake) with
-pending/error feedback and serialized actions; wallpaper/theme delegation;
-optional settings after the tested config reader.
+Implemented and live-verified on the primary session:
+
+- audio and microphone through reactive PipeWire state (defaultAudioSink /
+  defaultAudioSource, PwObjectTracker bound only while open) with one action
+  path each: clamped volume writes, mute toggles;
+- DND, night light, and stay awake through the first-party reactive services
+  (serviceFor omarchy.notifications / omarchy.nightlight / omarchy.idle),
+  resolved at each open; absent services render a disabled control with its
+  unavailable reason. The DND path was verified live end-to-end (on -> off ->
+  on, restored exactly);
+- serialized pending actions: one dispatch at a time through
+  dispatchControl, controls disabled while pending, pendingAction surfaced
+  in status();
+- controls keyboard cursor: Down/Up walks the six rows, Enter/Space
+  activates, Left/Right adjusts the focused volume slider, hover and
+  keyboard share one cursor; focus resets on page change and close;
+- Style page delegates in-process: closes Nexus, then
+  shell.summon("omarchy.menu", {menu: "style.theme" | "style.background"});
+  fixed routes, no subprocess;
+- validated settings reader (NexusSettingsModel.js, test/settings.test.js):
+  defaultPage, monitor, showMedia, showMetrics, preferredMediaIdentity read
+  from the canonical plugins[] entry, reactive to shell.json changes, never
+  written during open.
 
 ### Milestone 4 — live visual validation and expansion
 
@@ -334,8 +354,10 @@ user directs it); then expansion features, each with its own contract.
 
 ## Current next step
 
-Milestones 0–2 are complete; the plugin is installed, enabled, bound to
-Super+Shift+J, and benchmarked. Next is Milestone 3: reactive controls
-(audio, microphone, DND, night light, stay awake) with pending/error
-feedback and serialized actions, wallpaper/theme delegation, and the tested
-settings reader.
+Milestones 0–3 are complete; the plugin is installed, enabled, bound to
+Super+Shift+J, benchmarked, and pushed to github.com/devmobasa/omarchy-nexus
+(private). Next is Milestone 4: user-authorized live visual validation
+(multi-monitor, scaling, vertical/right-bar placement, repeated summon,
+teardown) and expansion features, each behind its own contract. Before
+public distribution: replace the placeholder manifest author and consider
+pruning the historical PLAN files.

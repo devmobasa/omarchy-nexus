@@ -28,7 +28,7 @@ assert.match(nexus, /function open\(payloadJson\)/, 'plugin exposes open lifecyc
 assert.match(nexus, /function close\(\)/, 'plugin exposes close lifecycle')
 assert.match(nexus, /function status\(\)/, 'plugin exposes runtime diagnostics')
 assert.match(nexus, /property bool opened/, 'host reads the logical open state')
-assert.match(nexus, /NexusModel\.normalizePayload\(payloadJson\)/,
+assert.match(nexus, /NexusModel\.normalizePayload\(payloadJson,/,
   'open() routes every payload through the tested normalizer')
 assert.match(nexus, /shell\.hide\(/, 'self-initiated close goes through shell.hide')
 assert.match(nexus, /closingFromHost/, 'host close and self close cannot recurse')
@@ -91,6 +91,37 @@ assert.match(nexus, /model: root\.opened \? root\.mprisPlayers : \[\]/,
 assert.match(nexus, /canGoNext/, 'next is capability-gated')
 assert.match(nexus, /canGoPrevious/, 'previous is capability-gated')
 assert.match(nexus, /canPause : root\.mediaSelected\.canPlay/, 'play/pause is capability-gated')
+
+// Controls contract: reactive state sources, one action path each,
+// serialized pending dispatch, unavailable reasons.
+assert.match(nexus, /import Quickshell\.Services\.Pipewire/, 'audio uses reactive PipeWire state')
+assert.match(nexus, /objects: root\.opened \? \[root\.audioSink, root\.audioSource\]/,
+  'PipeWire nodes are bound only while the panel is open')
+assert.match(nexus, /Math\.max\(0, Math\.min\(1, Number\(value\)/, 'volume writes are clamped')
+assert.match(nexus, /serviceFor\("omarchy\.notifications"\)/, 'DND uses the first-party service')
+assert.match(nexus, /serviceFor\("omarchy\.nightlight"\)/, 'night light uses the first-party service')
+assert.match(nexus, /serviceFor\("omarchy\.idle"\)/, 'stay awake uses the first-party service')
+assert.match(nexus, /if \(!opened \|\| pendingActionName !== ""\) return/,
+  'pending actions are serialized and cannot overlap')
+assert.match(nexus, /service unavailable|No output device|No input device/i,
+  'unavailable controls show a reason')
+
+// Settings contract: read-only, validated, reactive.
+assert.match(nexus, /NexusSettingsModel\.readSettings/, 'settings go through the tested reader')
+assert.match(nexus, /normalizePayload\(payloadJson, root\.settings\.defaultPage\)/,
+  'defaultPage applies only when the payload names no page')
+assert.match(nexus, /settings\.preferredMediaIdentity, mediaSerials\)/,
+  'media preference flows from validated settings')
+assert.match(nexus, /root\.settings\.showMedia/, 'showMedia gates the media card')
+assert.match(nexus, /root\.settings\.showMetrics/, 'showMetrics gates the metric grid')
+
+// Style delegation: close first, then open the Omarchy selector in-process.
+assert.match(nexus, /requestClose\(\)\s*\n\s*if \(host && typeof host\.summon === "function"\)/,
+  'style actions close Nexus before delegating')
+assert.match(nexus, /host\.summon\("omarchy\.menu", JSON\.stringify\(\{ menu: String\(route\) \}\)\)/,
+  'delegation goes through the shell menu with a fixed route')
+assert.match(nexus, /openStyleMenu\("style\.theme"\)/, 'theme routes to the existing selector')
+assert.match(nexus, /openStyleMenu\("style\.background"\)/, 'background routes to the existing selector')
 
 // Theme integration comes from shared tokens only.
 assert.match(nexus, /import qs\.Commons/, 'uses shared Color/Style/Border singletons')
