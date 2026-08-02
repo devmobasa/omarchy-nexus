@@ -7,6 +7,22 @@ function read(relative) {
   return fs.readFileSync(path.join(root, relative), 'utf8')
 }
 
+function filesBelow(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    if (entry.name === '.git' || entry.name === 'test-output') return []
+    const absolute = path.join(directory, entry.name)
+    return entry.isDirectory() ? filesBelow(absolute) : [absolute]
+  })
+}
+
+const repositoryFiles = filesBelow(root)
+for (const absolute of repositoryFiles) {
+  const relative = path.relative(root, absolute)
+  const content = fs.readFileSync(absolute, 'utf8').replace(/\n$/, '')
+  const lines = content === '' ? 0 : content.split('\n').length
+  assert.ok(lines < 500, `${relative} must stay under 500 lines (got ${lines})`)
+}
+
 const manifest = JSON.parse(read('manifest.json'))
 assert.equal(manifest.schemaVersion, 1)
 assert.equal(manifest.id, 'community.omarchy-nexus')
@@ -20,18 +36,26 @@ assert.equal(manifest.keepLoaded, undefined,
 assert.equal(manifest.license, 'MIT')
 assert.match(read('LICENSE'), /MIT License/)
 
-const nexus = read('Nexus.qml')
+const nexusEntry = read('Nexus.qml')
+const qmlSource = repositoryFiles
+  .filter(absolute => absolute.endsWith('.qml'))
+  .sort()
+  .map(absolute => fs.readFileSync(absolute, 'utf8'))
+  .join('\n')
+// Component roots use local `nexus` or `state` facade names. Normalize those
+// names so the existing behavior contracts remain about ownership, not ids.
+const nexus = qmlSource.replace(/\b(?:nexus|state)\./g, 'root.')
 
 // Host lifecycle contract.
-assert.match(nexus, /^Item \{/m, 'plugin entry point is an Item')
+assert.match(nexusEntry, /^Item \{/m, 'plugin entry point is an Item')
 assert.doesNotMatch(nexus, /\bShellRoot\s*\{/, 'plugin does not create another shell root')
-assert.match(nexus, /property var shell/, 'declares the shell injection')
-assert.match(nexus, /property var manifest/, 'declares the manifest injection')
-assert.match(nexus, /function open\(payloadJson\)/, 'plugin exposes open lifecycle')
-assert.match(nexus, /function close\(\)/, 'plugin exposes close lifecycle')
-assert.match(nexus, /function status\(\)/, 'plugin exposes runtime diagnostics')
-assert.match(nexus, /property bool opened/, 'host reads the logical open state')
-assert.match(nexus, /NexusModel\.normalizePayload\(payloadJson,/,
+assert.match(nexusEntry, /property var shell/, 'declares the shell injection')
+assert.match(nexusEntry, /property var manifest/, 'declares the manifest injection')
+assert.match(nexusEntry, /function open\(payloadJson\)/, 'plugin exposes open lifecycle')
+assert.match(nexusEntry, /function close\(\)/, 'plugin exposes close lifecycle')
+assert.match(nexusEntry, /function status\(\)/, 'plugin exposes runtime diagnostics')
+assert.match(nexusEntry, /property bool opened/, 'host reads the logical open state')
+assert.match(nexusEntry, /NexusModel\.normalizePayload\(\s*payloadJson,/,
   'open() routes every payload through the tested normalizer')
 assert.match(nexus, /shell\.hide\(/, 'self-initiated close goes through shell.hide')
 assert.match(nexus, /closingFromHost/, 'host close and self close cannot recurse')
@@ -113,7 +137,7 @@ assert.match(nexus, /NexusCavaModel\.parseFrame/)
 assert.match(nexus, /NexusCavaModel\.cavaCommand/)
 assert.match(nexus, /root\.mediaSelected !== null && root\.mediaSelected\.isPlaying/,
   'cava runs only while media actually plays')
-assert.match(nexus, /if \(!running && !exitSeen\) root\.cavaAvailable = false/,
+assert.match(nexus, /if \(!running && !exitSeen\)\s+root\.cavaAvailable = false/,
   'a missing cava binary degrades cleanly')
 assert.match(nexus, /root\.settings\.showVisualizer/)
 assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo", "\/proc\/net\/dev", "\/proc\/uptime"\]/,
@@ -203,7 +227,7 @@ assert.match(nexus, /Math\.max\(0, Math\.min\(1, Number\(value\)/, 'volume write
 assert.match(nexus, /serviceFor\("omarchy\.notifications"\)/, 'DND uses the first-party service')
 assert.match(nexus, /serviceFor\("omarchy\.nightlight"\)/, 'night light uses the first-party service')
 assert.match(nexus, /serviceFor\("omarchy\.idle"\)/, 'stay awake uses the first-party service')
-assert.match(nexus, /if \(!opened \|\| pendingActionName !== ""\) return/,
+assert.match(nexus, /if \(!opened \|\| pendingActionName !== ""\)\s+return/,
   'pending actions are serialized and cannot overlap')
 assert.match(nexus, /service unavailable|No output device|No input device/i,
   'unavailable controls show a reason')
@@ -250,9 +274,10 @@ assert.match(widget, /bar \? bar\.shell : null/, 'a null bar at construction is 
 assert.doesNotMatch(widget, /\bProcess\s*\{|\bTimer\s*\{/, 'the widget is purely reactive')
 
 // Menu delegation: close first, then open the Omarchy menu in-process.
-assert.match(nexus, /requestClose\(\)\s*\n\s*if \(host && typeof host\.summon === "function"\)/,
+assert.match(nexus, /requestClose\(\);?\s*if \(host && typeof host\.summon === "function"\)/,
   'delegated actions close Nexus before opening the menu')
-assert.match(nexus, /host\.summon\("omarchy\.menu", JSON\.stringify\(\{ menu: String\(route\) \}\)\)/,
+assert.match(nexus,
+  /host\.summon\("omarchy\.menu", JSON\.stringify\(\{\s*"?menu"?: String\(route\)/,
   'delegation goes through the shell menu with a fixed route')
 assert.match(nexus, /openMenuRoute\(NexusModel\.MENU_ROUTES\.theme\)/, 'theme routes to the existing selector')
 assert.match(nexus, /openMenuRoute\(NexusModel\.MENU_ROUTES\.background\)/, 'background routes to the existing selector')
@@ -268,7 +293,7 @@ assert.match(nexus, /No Bluetooth adapter/, 'missing adapter shows its reason')
 // Beauty pass: bounded width, accent-restrained hero, declarative arc meters.
 assert.match(nexus, /Math\.min\(Style\.space\(420\), 560\)/,
   'preferred width stays inside the 360-560 logical band under spacing scale')
-assert.match(nexus, /component ArcMeter: Item/, 'metrics render as arc meters')
+assert.match(nexus, /NexusArcMeter\s*\{/, 'metrics render with the extracted arc-meter component')
 assert.match(nexus, /PathAngleArc/, 'arcs are declarative Shapes, not Canvas repaints')
 assert.doesNotMatch(nexus, /\bCanvas\s*\{/, 'no Canvas repaint loops')
 
@@ -278,7 +303,8 @@ assert.match(nexus, /WheelHandler \{/, 'the tab row cycles on mouse wheel')
 assert.match(nexus, /function setPage\(next\)/, 'page changes route through setPage')
 assert.match(nexus, /pageShift/, 'page content slides directionally')
 assert.match(nexus, /readonly property int lastCursorIndex/, 'the cursor is page-aware')
-assert.match(nexus, /onLastCursorIndexChanged: if \(controlCursor > lastCursorIndex\) controlCursor = lastCursorIndex/,
+assert.match(nexus,
+  /onLastCursorIndexChanged:\s*\{\s*if \(controlCursor > lastCursorIndex\)\s*\{?\s*controlCursor = lastCursorIndex/,
   'the cursor clamps when its page loses rows')
 assert.match(nexus, /hasCursor: root\.controlCursor === NexusModel\.STYLE_ROWS\.THEME && root\.page === NexusModel\.PAGE_STYLE/,
   'style rows carry a page-scoped keyboard cursor')
@@ -302,11 +328,15 @@ assert.match(nexus, /root\.settings\.showNextEvent/)
 assert.match(nexus, /summonSibling/, 'cross-plugin hand-offs close Nexus first')
 assert.match(nexus, /clearPast/, 'history clearing goes through the first-party service')
 assert.match(nexus, /running: root\.notesDirty/, 'the autosave debounce only runs while dirty')
+assert.match(nexus, /property string notesText/, 'the notes state owner exposes editor text')
+assert.match(nexus, /onNotesTextChanged/, 'the extracted editor follows file-driven note changes')
 assert.match(nexus, /NexusSuiteModel\.GAME_MODE_PRESETS/)
+assert.match(nexusEntry, /NexusSettingsRows\.rows\(\)/,
+  'settings row metadata stays outside the lifecycle facade')
 assert.match(nexus, /NexusModel\.pageIcon/, 'narrow pages render icon-only tabs')
 assert.equal((nexus.match(/hasCursor: root\.controlCursor === NexusModel\.STYLE_ROWS\.[A-Z_]+ && root\.page === NexusModel\.PAGE_STYLE/g) || []).length, 2,
   'both style rows are cursor rows')
-assert.match(nexus, /if \(event\.angleDelta\.y === 0\) return/,
+assert.match(nexus, /if \(event\.angleDelta\.y === 0\)\s+return/,
   'horizontal wheel deltas never cycle pages')
 assert.match(nexus, /if \(!consumed\)\s*\n\s*root\.setPage/,
   'Left\/Right falls back to page cycling when the focused row rejects it')

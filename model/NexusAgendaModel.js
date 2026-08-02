@@ -1,16 +1,7 @@
-// ICS agenda model (shared engine with community.calendar-agenda; kept in sync by copy). Loaded by both the QML
-// entry points and the Node test harness, so it must stay dependency-free
-// (ES5 only — the QML V4 engine).
-//
-// Scope, deliberately: UID/SUMMARY/LOCATION/DTSTART/DTEND, RRULE
-// (DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, BYDAY incl. nth-weekday,
-// BYMONTHDAY, BYMONTH, UNTIL, COUNT), EXDATE/RDATE, RECURRENCE-ID
-// overrides, CANCELLED skipping, folded lines, quoted params, escaped text.
-// TZID values are treated as local wall-clock time — correct for events the
-// user created in their own timezone; documented limitation otherwise
-// (there is no Intl in the QML engine, and toLocaleString silently returns
-// wrong times rather than throwing).
-
+// Shared with community.calendar-agenda and loaded by QML plus Node, so this
+// file stays dependency-free ES5. It covers the panel's RFC 5545 subset,
+// including recurrence, overrides, cancellations, folds, and escaped text.
+// TZID values use local wall-clock time because QML V4 has no Intl support.
 function unfold(raw) {
   // RFC 5545 3.1: CRLF + single WSP is a fold. Strip exactly one WSP.
   return String(raw).replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "");
@@ -484,8 +475,7 @@ function formatEventTime(occurrence) {
 
 if (typeof module !== "undefined") {
   module.exports = {
-    DEFAULT_REFRESH_MINUTES: DEFAULT_REFRESH_MINUTES,
-    AGENDA_DAYS: AGENDA_DAYS,
+    DEFAULT_REFRESH_MINUTES: DEFAULT_REFRESH_MINUTES, AGENDA_DAYS: AGENDA_DAYS,
     unfold: unfold,
     splitLine: splitLine,
     parseIcsDate: parseIcsDate,

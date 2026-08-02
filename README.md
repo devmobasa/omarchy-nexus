@@ -192,6 +192,13 @@ CI runs the node model and contract tests on every push.
 
 ## Development
 
+The plugin entry point is intentionally a thin composition facade:
+
+- `Nexus.qml` owns the shell lifecycle and routes interactions.
+- `state/` owns effectful integrations such as media, metrics, and files.
+- `ui/` owns the panel shell and focused visual sections.
+- `model/` contains dependency-free calculations shared with Node tests.
+
 `omarchy plugin add` leaves a git checkout at
 `~/.config/omarchy/plugins/community.omarchy-nexus/`, so you can edit there
 directly. If you work in a separate clone, copy it over first:
