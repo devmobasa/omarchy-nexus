@@ -4,7 +4,6 @@ Status: approved for Milestone 0; live staging held pending failure-safe tooling
 Supersedes: PLAN-v7.md
 Review basis: active Omarchy Quattro checkout verified at 12af1883
 Plugin id: community.omarchy-nexus
-Source workspace: /home/user/omarchy/plugins/community.omarchy-nexus
 
 The intervening commits from the earlier review basis were reviewed as
 contract-neutral for plugin hosting, discovery, validation, and retained
@@ -597,8 +596,7 @@ The expected result is a dark, shell-themed right-side cockpit:
 - restrained accent glow and shallow entrance motion;
 - no constant animation while closed or idle.
 
-Use Color, Style, Border, and BorderSurface. Do not copy Caelestia code,
-structure, colors, artwork, shaders, icons, or text.
+Use Color, Style, Border, and BorderSurface.
 
 A fresh open always focuses the selected page tab after the surface is ready.
 

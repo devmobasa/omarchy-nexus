@@ -1,0 +1,168 @@
+# Omarchy Nexus
+
+A themed desktop cockpit panel for [Omarchy](https://omarchy.org) v4
+("Quattro"): clock, media, system state, quick controls, and style — one
+keystroke away, fully dormant when closed.
+
+## Features
+
+- **Header (every page)** — accent clock, date, and focused workspace beside
+  now-playing artwork (accent glow while something plays).
+- **Overview** — capability-gated media transport above CPU, memory,
+  storage, and battery arc meters.
+- **Controls** — output volume slider, output/input mute, Do Not Disturb,
+  night light, stay awake, and Bluetooth, plus Capture and Power quick
+  actions that hand off to the Omarchy menu (its own second click confirms
+  destructive power actions).
+- **Style** — theme and background pickers, delegated to the built-in
+  Omarchy selectors.
+- **Deterministic media** — one MPRIS adapter with proxy-aware player
+  selection (playerctld and browser-integration proxies never shadow the
+  real player) and stable ordering, so the shown player never flaps.
+- **Theme-native** — colors, borders, and spacing derive from the shared
+  Omarchy tokens; the panel re-themes with your shell.
+- **Dormant when closed** — no timers, no processes, no media or PipeWire
+  bindings while hidden; the panel unloads entirely between summons
+  (measured cold summon: p95 88 ms).
+- **Keyboard-driven** — summon, close, switch pages, and drive every
+  Controls-page row without a pointer (see below); the media transport and
+  the Capture, Power, Theme, and Background hand-off buttons are click-only
+  for now.
+
+## Install
+
+```sh
+omarchy plugin add https://github.com/devmobasa/omarchy-nexus --enable
+```
+
+Then toggle it:
+
+```sh
+omarchy-shell shell toggle community.omarchy-nexus '{}'
+```
+
+The payload may name a page directly: `'{"page":"controls"}'` (pages:
+`overview`, `controls`, `style`).
+
+### Keybinding
+
+Add to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + SHIFT + J", "Nexus cockpit", "omarchy-shell shell toggle community.omarchy-nexus '{}'")
+```
+
+Then reload Hyprland and check for config errors:
+
+```sh
+hyprctl reload
+hyprctl configerrors
+```
+
+## Keyboard
+
+| Key | Action |
+| --- | --- |
+| `Esc` | Close the panel |
+| `Tab` / `Shift+Tab` | Cycle pages |
+| `Down` / `Up` | Walk the control rows (Controls page) |
+| `Enter` / `Space` | Activate the focused control (Controls page) |
+| `Left` / `Right` | Adjust the volume slider when it is focused on the Controls page, otherwise cycle pages |
+
+## Settings
+
+All optional, read from your plugin entry in
+`~/.config/omarchy/shell.json` — the fields sit inline on the entry itself.
+Invalid values fall back to defaults; Nexus never writes settings.
+
+```json
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "community.omarchy-nexus",
+      "defaultPage": "controls",
+      "monitor": "DP-3",
+      "showMedia": true,
+      "showMetrics": true,
+      "preferredMediaIdentity": "spotify"
+    }
+  ]
+}
+```
+
+Presence of the entry is what enables the plugin; remove it or run
+`omarchy plugin disable community.omarchy-nexus` to switch Nexus off.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `defaultPage` | `"overview"` | Page shown when the summon payload names none |
+| `monitor` | `"focused"` | Output name to open on, or `"focused"` |
+| `showMedia` | `true` | Show the media artwork and transport |
+| `showMetrics` | `true` | Show the metric arc meters |
+| `preferredMediaIdentity` | `""` | Prefer this player identity (case-insensitive) among active players |
+
+## Tests
+
+The static suite (model fixtures, manifest validation, contract pins,
+qmllint) runs against the Omarchy shell source, which it reads from
+`/usr/share/omarchy` by default, and needs `node`, `omarchy`, and `qmllint`
+on `PATH`:
+
+```sh
+./test/all
+```
+
+Set `OMARCHY_PATH` to point at a different Omarchy source tree:
+
+```sh
+OMARCHY_PATH=/path/to/omarchy ./test/all
+```
+
+`test/live` installs a throwaway copy into your running session, so it needs
+a system where Nexus is *not* installed (it refuses if the plugin directory,
+a `shell.json` entry, or a registry record already exists), and it removes
+everything it created:
+
+```sh
+./test/live --confirm-live   # guarded install/summon/teardown round trip
+```
+
+`test/benchmark` and `test/stress` measure an existing install instead, so
+they need Nexus already installed and enabled. They leave the panel closed
+and the install in place; `test/benchmark` writes its report into
+`test-output/`:
+
+```sh
+./test/benchmark             # cold-summon latency (keepLoaded decision data)
+./test/stress                # repeated summon cycles, surface + unload proof
+```
+
+CI runs the node model and contract tests on every push.
+
+## Development
+
+`omarchy plugin add` leaves a git checkout at
+`~/.config/omarchy/plugins/community.omarchy-nexus/`, so you can edit there
+directly. If you work in a separate clone, copy it over first:
+
+```sh
+cp -RP -- . ~/.config/omarchy/plugins/community.omarchy-nexus/
+```
+
+Either way, restart the shell after every change:
+
+```sh
+omarchy restart shell
+```
+
+The restart matters: current Quickshell builds do not expose
+`Qt.clearComponentCache`, so the shell's plugin hot-reload cannot swap
+already-compiled QML — a rescan alone keeps serving the old component.
+
+Design notes and the full milestone history live in
+[docs/PLAN-v9.md](docs/PLAN-v9.md).
+
+## License
+
+[MIT](LICENSE)

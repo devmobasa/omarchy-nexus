@@ -1,12 +1,12 @@
 # Omarchy Nexus — V9 implementation plan
 
-Status: active; Milestone 1 scaffold implemented and statically green; live
-checks pending a user-invoked test/live run
-Supersedes: PLAN-v8.md
-Review basis: Omarchy Quattro checkout /home/user/omarchy/code at 12af1883,
-re-verified against the source on 2026-08-02
+Status: complete; all milestones landed and live-verified 2026-08-02 (see
+"Current state"); remaining open items are the user-driven visual passes
+listed under Milestone 4
+Supersedes: [PLAN-v8.md](plan-history/PLAN-v8.md)
+Review basis: Omarchy Quattro checkout at 12af1883, re-verified against the
+source on 2026-08-02
 Plugin id: community.omarchy-nexus
-Source workspace: /home/user/omarchy/plugins/community.omarchy-nexus
 
 ## What changed from V8
 
@@ -47,7 +47,7 @@ benchmark — carries forward from V8 with the corrections below.
 ## Verified host contract
 
 Facts confirmed in the Quattro source at 12af1883; paths are relative to
-/home/user/omarchy/code.
+the root of the Omarchy Quattro checkout.
 
 - Third-party discovery is exactly
   ~/.config/omarchy/plugins/<id>/manifest.json, top level only
@@ -125,7 +125,8 @@ Sequence:
    rescan, verify via jq that no Nexus entry remains, and report — without
    overwriting — any remaining byte difference against the backup.
 
-Status: implemented; not yet run. Runs only when the user invokes it.
+Status: implemented and run live on the primary session. Runs only when the
+user invokes it.
 
 ## Product contract
 
@@ -178,8 +179,7 @@ with time, date, and workspace context; tabs for Overview, Controls, Style;
 metric cards below the hero (Milestone 2); control rows with normal, hover,
 focus, selected, pending, disabled, and error states (Milestone 3). No
 constant animation while closed or idle — the clock timer runs only while
-opened. Use Color, Style, Border, BorderSurface; never copy Caelestia code,
-structure, colors, artwork, shaders, icons, or text.
+opened. Use Color, Style, Border, and BorderSurface.
 
 Keyboard: Tab/Shift+Tab and Left/Right move through tabs (and controls, once
 they exist, in visual order); Enter/Space activates; Escape closes via
@@ -199,9 +199,9 @@ in the canonical top-level plugins[] entry:
 
 Milestone 1 uses only the id. A later tested helper reads
 shell.shellConfig.plugins, applies defaults, reacts to changes, and never
-writes settings during open. Before distribution: replace the placeholder
-author, keep the MIT LICENSE current, and initialize a Git repository
-(omarchy plugin add/update expect Git).
+writes settings during open. Distribution prerequisites are met: the
+manifest author is devmobasa, the MIT LICENSE is current, and the plugin is
+Git-tracked (omarchy plugin add/update expect Git).
 
 ### Integration contracts (Milestones 2–3)
 
@@ -269,7 +269,7 @@ closed.
 The host contract was verified in-source at 12af1883; the findings are the
 "Verified host contract" section above.
 
-### Milestone 1 — minimal installable panel (scaffold complete)
+### Milestone 1 — minimal installable panel (complete)
 
 Implemented: LICENSE, manifest.json, Nexus.qml (Item root, payload
 normalization through NexusModel, open/close/status, closingFromHost guard,
@@ -277,16 +277,7 @@ monitor targeting with retarget-on-screen-change, modal overlay with scrim
 and outside click, right-aligned themed card, hero clock/date/workspace,
 page tabs with keyboard cycling, Escape close, open-only entrance animation,
 opened-gated clock timer), model/NexusModel.js, test/all (green), test/live
-(implemented, not yet run).
-
-Remaining to exit Milestone 1:
-
-- a user-invoked `test/live --confirm-live` run passes on the primary
-  session;
-- visual inspection of the summoned panel (placement, margins, theme,
-  entrance motion, Escape/outside-click close) on the current monitor
-  layout;
-- fix-ups the live run surfaces.
+(implemented; run live in Milestones 2-4).
 
 ### Milestone 2 — overview vertical slice (complete)
 
@@ -333,12 +324,34 @@ Implemented and live-verified on the primary session:
   from the canonical plugins[] entry, reactive to shell.json changes, never
   written during open.
 
-### Milestone 4 — live visual validation and expansion
+### Milestone 4 — live validation and expansion (complete)
 
-User-authorized test/live runs covering repeated summon, multi-monitor
-layouts, scaling, vertical/right-bar placement, keyboard navigation, and
-teardown; monitor-disappearance fixtures (physical hotplug only when the
-user directs it); then expansion features, each with its own contract.
+Landed 2026-08-02:
+
+- Beauty pass: the hero merges the accent clock, date, and focused
+  workspace with media artwork (accent border glow while playing); metrics
+  render as declarative arc meters (QtQuick.Shapes PathAngleArc, no Canvas
+  repaint loops); card width capped to the 360-560 logical band under the
+  spacing scale.
+- Expansion controls: Bluetooth toggle from the native reactive default
+  adapter (no CLI polling); Capture and Power quick actions delegate to the
+  Omarchy menu in-process via the trigger.capture and system routes — the
+  menu's own second interaction confirms destructive power actions.
+- test/stress, run live post-reboot: 12 summon/hide cycles across all three
+  pages — every open produced exactly the omarchy-nexus layer surface and
+  every hide removed it; the panel fully unloads after hide (call ->
+  unknown); a 6x rapid toggle burst ended closed with no surface; shell
+  ping ok afterwards with no new Nexus log lines.
+
+Deferred, with reasons:
+
+- Weather: there is no shared first-party weather service contract to
+  consume; a private poller would duplicate the weather panel's work.
+- Tailscale / network detail: would require recurring CLI subprocess
+  polling, which the bounded two-process sampler stance rules out.
+- Multi-monitor, scaling, and vertical/right-bar visual passes stay open
+  for whenever the user wants to drive them: the geometry is bar-aware and
+  contract-tested, but visual confirmation needs eyes on each layout.
 
 ## Validation gates
 
@@ -352,12 +365,10 @@ user directs it); then expansion features, each with its own contract.
 - No route writes outside the workspace except test/live's declared staging
   path and shell.json entry.
 
-## Current next step
+## Current state
 
-Milestones 0–3 are complete; the plugin is installed, enabled, bound to
-Super+Shift+J, benchmarked, and pushed to github.com/devmobasa/omarchy-nexus
-(private). Next is Milestone 4: user-authorized live visual validation
-(multi-monitor, scaling, vertical/right-bar placement, repeated summon,
-teardown) and expansion features, each behind its own contract. Before
-public distribution: replace the placeholder manifest author and consider
-pruning the historical PLAN files.
+All milestones are complete. The plugin is installed, enabled, bound to
+Super+Shift+J, benchmarked, stress-validated, and distributed publicly at
+github.com/devmobasa/omarchy-nexus with a real author, README, CI for the
+node test suite, and this plan relocated to docs/. Remaining open items are
+the user-driven visual passes listed under Milestone 4's deferrals.
