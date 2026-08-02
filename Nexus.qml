@@ -15,6 +15,9 @@ import "model/NexusMediaModel.js" as NexusMediaModel
 import "model/NexusMetricsModel.js" as NexusMetricsModel
 import "model/NexusSettingsModel.js" as NexusSettingsModel
 import "model/NexusGameModeModel.js" as NexusGameModeModel
+import "model/NexusKeybindsModel.js" as NexusKeybindsModel
+import "model/NexusSensorsModel.js" as NexusSensorsModel
+import "model/NexusCavaModel.js" as NexusCavaModel
 
 Item {
   id: root
@@ -112,6 +115,13 @@ Item {
     root.opened = true
     refreshServices()
     refreshMedia()
+    if (root.settings.showSensors && !sensorDiscoveryProcess.running)
+      sensorDiscoveryProcess.running = true
+    if (!cavaConfWritten && cavaAvailable && root.settings.showVisualizer) {
+      ensureDirsProcess.writeCavaAfter = true
+      runProcess(ensureDirsProcess)
+    }
+    if (root.page === "keys" && !bindsProcess.running) bindsProcess.running = true
     Qt.callLater(function () {
       if (root.opened) keyCatcher.forceActiveFocus()
     })
@@ -272,6 +282,145 @@ Item {
     if (btAdapter) btAdapter.enabled = !(btAdapter.enabled === true)
   }
 
+  // ---- keybind cheatsheet (plain-text hyprctl binds) -----------------------
+  // The JSON form blanks the key for every code:NN bind, so the text output
+  // is the source of truth. Fetched on each entry to the keys page; typing
+  // filters (the key catcher feeds keysQuery), Backspace edits, Escape
+  // clears the query before it closes the panel.
+  property var keybindRows: []
+  property string keysQuery: ""
+
+  Process {
+    id: bindsProcess
+    command: ["hyprctl", "binds"]
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.keybindRows = NexusKeybindsModel.parseBindsText(text)
+    }
+  }
+
+  readonly property var filteredKeybinds: NexusKeybindsModel.filterBinds(keybindRows, keysQuery)
+
+  // ---- hardware sensors ----------------------------------------------------
+  // Discovery once per open (hwmon indices are probe-order); sampling greps
+  // exactly the selected paths (self-labeling, shift-immune). An NVIDIA
+  // display GPU has no sysfs telemetry, so nvidia-smi joins the cadence;
+  // its absence just drops the GPU row.
+  property var sensorsCatalog: null
+  property var sensorsSpec: null
+  property var sensorSampleMap: ({})
+  property var nvidiaInfo: null
+  property bool nvidiaAvailable: true
+
+  readonly property var sensorReadings: sensorsSpec
+    ? NexusSensorsModel.readings(sensorsSpec, sensorSampleMap, nvidiaInfo, sensorsCatalog) : []
+
+  Process {
+    id: sensorDiscoveryProcess
+    command: NexusSensorsModel.discoveryCommand()
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.sensorsCatalog = NexusSensorsModel.parseDiscovery(text)
+        root.sensorsSpec = NexusSensorsModel.selectSensors(root.sensorsCatalog)
+        root.runSensorSample()
+      }
+    }
+
+    // find -L reports harmless sysfs symlink loops; keep them out of the log.
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
+  Process {
+    id: sensorSampleProcess
+    command: ["grep", "-H", ".", "/dev/null"]
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.sensorSampleMap = NexusSensorsModel.parseLines(text)
+    }
+  }
+
+  Process {
+    id: nvidiaProcess
+    property bool exitSeen: false
+    command: NexusSensorsModel.nvidiaCommand()
+    onRunningChanged: if (!running && !exitSeen) root.nvidiaAvailable = false
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        nvidiaProcess.exitSeen = true
+        root.nvidiaInfo = NexusSensorsModel.parseNvidiaSmi(text)
+      }
+    }
+  }
+
+  function runSensorSample() {
+    if (!sensorsSpec || !sensorsCatalog) return
+    var paths = NexusSensorsModel.samplePaths(sensorsSpec, sensorsCatalog)
+    if (paths.length > 0) {
+      sensorSampleProcess.command = NexusSensorsModel.sampleCommand(paths)
+      if (!sensorSampleProcess.running) sensorSampleProcess.running = true
+    }
+    if (sensorsSpec.gpu && sensorsSpec.gpu.kind === "nvidia" && nvidiaAvailable
+        && !nvidiaProcess.running) {
+      nvidiaProcess.exitSeen = false
+      nvidiaProcess.running = true
+    }
+  }
+
+  Timer {
+    running: root.opened && root.sensorsSpec !== null && root.settings.showSensors
+    interval: NexusSensorsModel.SENSOR_INTERVAL_MS
+    repeat: true
+    onTriggered: root.runSensorSample()
+  }
+
+  // ---- cava visualizer (behind the media card) -----------------------------
+  // Raw ascii frames from cava, one line per frame, parsed through the
+  // model. Runs only while the panel is open on Overview with media playing;
+  // a start failure (cava not installed) hides the strip for the session.
+  property bool cavaAvailable: true
+  property bool cavaConfWritten: false
+  property var cavaBars: NexusCavaModel.silentFrame()
+  readonly property string cavaConfFile: NexusCavaModel.confPath(settingsDir)
+
+  FileView {
+    id: cavaConfWriter
+    path: root.cavaConfFile
+    printErrors: false
+    atomicWrites: true
+    onSaved: {
+      root.cavaConfWritten = true
+      reload()
+    }
+  }
+
+  Process {
+    id: cavaProcess
+    property bool exitSeen: false
+    running: root.opened && root.page === "overview" && root.cavaConfWritten
+      && root.cavaAvailable && root.settings.showMedia && root.settings.showVisualizer
+      && root.mediaSelected !== null && root.mediaSelected.isPlaying
+    command: NexusCavaModel.cavaCommand(root.cavaConfFile)
+    onStarted: exitSeen = true
+    onRunningChanged: {
+      if (!running && !exitSeen) root.cavaAvailable = false
+      if (!running) root.cavaBars = NexusCavaModel.silentFrame()
+      if (running) exitSeen = false
+    }
+
+    stdout: SplitParser {
+      onRead: function (line) {
+        var frame = NexusCavaModel.parseFrame(line)
+        if (frame !== null) root.cavaBars = frame
+      }
+    }
+  }
+
   // ---- game mode (flag file shared with community.game-mode) ---------------
   // Presence of the flag in Omarchy's sourced toggles directory is the whole
   // state; removing it restores the user's exact config. The strip set comes
@@ -338,19 +487,23 @@ Item {
     property bool exitSeen: false
     property bool writeFlagAfter: false
     property bool writeStateAfter: false
+    property bool writeCavaAfter: false
     command: ["mkdir", "-p", root.gameModeDir, root.settingsDir]
     onRunningChanged: if (!running && !exitSeen) {
       if (writeFlagAfter) root.finishGameMode(false, "mkdir could not be started")
       if (writeStateAfter) root.settingsError = "mkdir could not be started"
       writeFlagAfter = false
       writeStateAfter = false
+      writeCavaAfter = false
     }
     onExited: function (exitCode) {
       exitSeen = true
       var flagWanted = writeFlagAfter
       var stateWanted = writeStateAfter
+      var cavaWanted = writeCavaAfter
       writeFlagAfter = false
       writeStateAfter = false
+      writeCavaAfter = false
       if (exitCode !== 0) {
         if (flagWanted) root.finishGameMode(false, "could not create the state directories")
         if (stateWanted) root.settingsError = "Could not create the state directories"
@@ -358,6 +511,7 @@ Item {
       }
       if (flagWanted) flagWriter.setText(root.gameModeFlagContent)
       if (stateWanted) stateWriter.setText(NexusSettingsModel.buildStateJson(root.stateOverrides))
+      if (cavaWanted) cavaConfWriter.setText(NexusCavaModel.buildConfig())
     }
   }
 
@@ -404,7 +558,11 @@ Item {
   //   settings: one row per settingsRows entry.
   // -1 means the tab row owns focus. The cursor resets on page change.
   property int controlCursor: -1
-  onPageChanged: controlCursor = -1
+  onPageChanged: {
+    controlCursor = -1
+    keysQuery = ""
+    if (page === "keys" && opened && !bindsProcess.running) bindsProcess.running = true
+  }
   // The cursor must never outlive its row: when a page loses rows (player
   // vanished, chip hidden), clamp back into range.
   onLastCursorIndexChanged: if (controlCursor > lastCursorIndex) controlCursor = lastCursorIndex
@@ -419,6 +577,8 @@ Item {
     { key: "showStorage", label: "Storage meter", desc: "" },
     { key: "showBattery", label: "Battery meter", desc: "Hide on desktops without a battery." },
     { key: "showNetwork", label: "Network card", desc: "Live down/up throughput sparkline." },
+    { key: "showSensors", label: "Sensors card", desc: "CPU/GPU/NVMe temperatures and fans." },
+    { key: "showVisualizer", label: "Audio visualizer", desc: "Spectrum bars while media plays (needs cava installed)." },
     { key: "showFetch", label: "System info line", desc: "hostname · kernel · uptime under the clock." },
     { key: "gmAnimations", label: "Animations", desc: "", section: "game" },
     { key: "gmBlur", label: "Blur", desc: "", section: "game" },
@@ -968,7 +1128,16 @@ Item {
         // transport, seek), otherwise it cycles pages. Tab always cycles.
         Keys.onPressed: function (event) {
           if (event.key === Qt.Key_Escape) {
-            root.requestClose()
+            // On the keys page Escape clears the filter first.
+            if (root.page === "keys" && root.keysQuery !== "") root.keysQuery = ""
+            else root.requestClose()
+            event.accepted = true
+          } else if (root.page === "keys" && event.key === Qt.Key_Backspace) {
+            root.keysQuery = root.keysQuery.slice(0, -1)
+            event.accepted = true
+          } else if (root.page === "keys" && event.text.length === 1
+              && event.text >= " " && event.key !== Qt.Key_Tab) {
+            root.keysQuery += event.text
             event.accepted = true
           } else if (event.key === Qt.Key_Down && root.lastCursorIndex >= 0) {
             root.controlCursor = Math.min(root.controlCursor + 1, root.lastCursorIndex)
@@ -1338,6 +1507,29 @@ Item {
                 }
               }
 
+              // Audio spectrum: subtle accent bars fed by cava while
+              // something plays; absent cleanly when cava is not installed.
+              Row {
+                width: parent.width
+                height: Style.space(18)
+                visible: cavaProcess.running
+                spacing: Math.max(1, Math.floor(width / NexusCavaModel.BAR_COUNT * 0.25))
+
+                Repeater {
+                  model: root.cavaBars
+
+                  Rectangle {
+                    required property real modelData
+                    width: Math.max(2, (parent.width - (NexusCavaModel.BAR_COUNT - 1) * parent.spacing)
+                      / NexusCavaModel.BAR_COUNT)
+                    height: Math.max(2, parent.height * modelData)
+                    y: parent.height - height
+                    radius: 1
+                    color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.45)
+                  }
+                }
+              }
+
               // Player switcher chip: visible only when more than one real
               // player is active; click or Enter steps the deterministic order.
               Button {
@@ -1516,6 +1708,133 @@ Item {
                   }
                 }
               }
+            }
+          }
+
+          // ---- overview: hardware sensors ---------------------------------
+          BorderSurface {
+            visible: root.page === "overview" && root.settings.showMetrics
+              && root.settings.showSensors && root.sensorReadings.length > 0
+            width: parent.width
+            implicitHeight: sensorsColumn.implicitHeight + Style.spacing.rowPaddingX * 2
+            radius: Style.cornerRadius
+            color: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.04)
+            borderSpec: Border.flat(Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.10), 1)
+
+            Column {
+              id: sensorsColumn
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(12)
+              spacing: Style.space(3)
+
+              Text {
+                text: "Sensors"
+                color: Color.menu.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+
+              Repeater {
+                model: root.sensorReadings
+
+                Item {
+                  required property var modelData
+                  width: parent.width
+                  height: sensorLabel.implicitHeight
+
+                  Text {
+                    id: sensorLabel
+                    anchors.left: parent.left
+                    text: modelData.label
+                    color: Qt.darker(Color.menu.text, 1.3)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Text {
+                    anchors.right: parent.right
+                    text: modelData.value
+                    color: Color.menu.text
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- keys: searchable keybind cheatsheet ------------------------
+          Column {
+            visible: root.page === "keys"
+            width: parent.width
+            spacing: Style.space(4)
+
+            Text {
+              width: parent.width
+              text: root.keysQuery === ""
+                ? "Type to filter " + root.keybindRows.length + " keybinds · Esc clears"
+                : "Filter: " + root.keysQuery + "▏ (" + root.filteredKeybinds.length + " matches)"
+              color: root.keysQuery === "" ? Qt.darker(Color.menu.text, 1.4) : Color.accent
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideLeft
+            }
+
+            Repeater {
+              model: root.filteredKeybinds.slice(0, 60)
+
+              Item {
+                required property var modelData
+                width: parent.width
+                height: Math.max(comboChip.implicitHeight, bindDesc.implicitHeight) + Style.space(4)
+
+                Rectangle {
+                  id: comboChip
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: comboText.implicitWidth + Style.space(12)
+                  implicitHeight: comboText.implicitHeight + Style.space(4)
+                  height: implicitHeight
+                  radius: Style.cornerRadius / 2
+                  color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.14)
+
+                  Text {
+                    id: comboText
+                    anchors.centerIn: parent
+                    text: modelData.combo
+                    color: Color.accent
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+
+                Text {
+                  id: bindDesc
+                  anchors.left: comboChip.right
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: modelData.description !== "" ? modelData.description : "(no description)"
+                  color: modelData.description !== "" ? Color.menu.text : Qt.darker(Color.menu.text, 1.5)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.filteredKeybinds.length > 60
+              text: "+" + (root.filteredKeybinds.length - 60) + " more — refine the filter"
+              color: Qt.darker(Color.menu.text, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
             }
           }
 

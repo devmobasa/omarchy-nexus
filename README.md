@@ -24,6 +24,14 @@ keystroke away, fully dormant when closed.
   Omarchy menu (its own second click confirms destructive power actions).
 - **Style** — theme and background pickers, delegated to the built-in
   Omarchy selectors.
+- **Keys** — a searchable cheatsheet of every live Hyprland keybind (from
+  `hyprctl binds`, so it never goes stale): just start typing to filter,
+  Backspace edits, Esc clears.
+- **Sensors** — CPU/GPU/NVMe temperatures and fan RPMs on Overview,
+  discovered per machine (hybrid-GPU aware: an NVIDIA display GPU is read
+  via `nvidia-smi`, AMD via sysfs; fans hide when a machine has none).
+- **Audio visualizer** — subtle spectrum bars inside the media card while
+  something plays (needs the `cava` package; hides cleanly without it).
 - **Settings** — the cog in the tab row: choose which Overview cards show
   (hide the battery meter on a desktop, drop the media card, and so on)
   and pick exactly which effects Game Mode strips (animations, blur,
@@ -134,6 +142,8 @@ Presence of the entry is what enables the plugin; remove it or run
 | `showNetwork` | `true` | Show the network throughput sparkline (needs `showMetrics`) |
 | `showFetch` | `true` | Show the hostname · kernel · uptime line |
 | `showCpu` / `showMemory` / `showStorage` / `showBattery` | `true` | Per-meter visibility |
+| `showSensors` | `true` | Hardware sensors card |
+| `showVisualizer` | `true` | Audio spectrum in the media card (needs `cava`) |
 | `gmAnimations` / `gmBlur` / `gmShadows` / `gmGaps` / `gmRounding` / `gmTearing` | `true` | What Game Mode strips |
 | `preferredMediaIdentity` | `""` | Prefer this player identity (case-insensitive) among active players |
 

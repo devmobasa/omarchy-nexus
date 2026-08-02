@@ -52,33 +52,67 @@ assert.match(nexus, /Hyprland\.focusedMonitor/, 'resolution starts from the focu
 assert.match(nexus, /ToplevelManager\.activeToplevel/, 'falls back to the active toplevel screen')
 assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or closes')
 
-// Closed-state dormancy and animation policy. Five timers total; four are
-// gated on `opened` (clock, both samplers, media position tick). The fifth,
-// pendingClearTimer, is a one-shot 400 ms clear started only from
-// dispatchControl, which no-ops while closed. Pinning the total means any
-// new timer fails this test until it is reviewed for dormancy.
-assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 5,
+// Closed-state dormancy and animation policy. Six timers total; five are
+// gated on `opened` (clock, both samplers, media position tick, sensors
+// cadence). The sixth, pendingClearTimer, is a one-shot 400 ms clear
+// started only from dispatchControl, which no-ops while closed. Pinning the
+// total means any new timer fails this test until reviewed for dormancy.
+assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 6,
   'the timer inventory is pinned: a new timer must be reviewed for dormancy')
-assert.equal((nexus.match(/running: root\.opened/g) || []).length, 4,
-  'the four recurring timers are gated on the panel being open')
+assert.equal((nexus.match(/running: root\.opened/g) || []).length, 6,
+  'five recurring timers plus the cava process are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
 assert.doesNotMatch(nexus, /execDetached|bash -c|sh -c/, 'no shell command strings, ever')
 
-// Process inventory: exactly five whitelisted argument-array commands — the
-// two samplers plus the three user-action-only game-mode/settings steps.
-// hyprctl appears exactly once, as the fixed reload command.
-assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 5,
-  'sampler, df, mkdir, rm, and hyprctl reload — nothing else')
+// Process inventory: exactly ten whitelisted argument-array commands — the
+// two proc samplers, three user-action game-mode/settings steps, the keys
+// fetch, sensor discovery + sampling + nvidia-smi, and cava. hyprctl
+// appears in exactly two commands (reload, binds).
+assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 10,
+  'the process inventory is pinned: a new process must be reviewed')
 assert.match(nexus, /command: \["mkdir", "-p", root\.gameModeDir, root\.settingsDir\]/,
   'directory creation is a fixed argument array')
 assert.match(nexus, /command: \["rm", "-f", root\.gameModeFile\]/,
   'flag removal targets exactly the shared flag file')
 assert.match(nexus, /command: \["hyprctl", "reload"\]/,
   'the reload is a fixed argument array')
-assert.equal((nexus.match(/command: \[[^\]]*hyprctl[^\]]*\]/g) || []).length, 1,
-  'hyprctl appears in exactly one command, the fixed reload')
+assert.match(nexus, /command: \["hyprctl", "binds"\]/,
+  'the keybind fetch reads the plain-text form (JSON blanks code: binds)')
+assert.equal((nexus.match(/command: \[[^\]]*hyprctl[^\]]*\]/g) || []).length, 2,
+  'hyprctl appears in exactly two commands: reload and binds')
 assert.equal((nexus.match(/could not be started/g) || []).length, 4,
-  'every process has a start-failure guard — the dual-consumer mkdir reports to both waiters (Quickshell emits no exited for unstartable commands)')
+  'every failure-surfacing process has a start-failure guard')
+
+// Keybind cheatsheet: text output parsed and filtered through the model;
+// Escape clears the filter before it closes the panel.
+assert.match(nexus, /NexusKeybindsModel\.parseBindsText/)
+assert.match(nexus, /NexusKeybindsModel\.filterBinds/)
+assert.match(nexus, /root\.page === "keys" && root\.keysQuery !== ""/,
+  'Escape clears the keys filter first')
+
+// Sensors: discovery once per open, self-labeling grep sampling, nvidia-smi
+// only for an NVIDIA display GPU, absence degrades to a hidden row. The
+// discovery stderr is swallowed (find -L reports harmless sysfs loops).
+assert.match(nexus, /NexusSensorsModel\.discoveryCommand\(\)/)
+assert.match(nexus, /NexusSensorsModel\.parseDiscovery/)
+assert.match(nexus, /NexusSensorsModel\.selectSensors/)
+assert.match(nexus, /NexusSensorsModel\.sampleCommand/)
+assert.match(nexus, /NexusSensorsModel\.readings/)
+assert.match(nexus, /sensorsSpec\.gpu\.kind === "nvidia" && nvidiaAvailable/,
+  'nvidia-smi runs only when the display GPU needs it and it works')
+assert.match(nexus, /root\.settings\.showSensors/, 'showSensors gates the card and cadence')
+
+// Cava visualizer: config and frames through the model; the process runs
+// only while open on Overview with media playing; a start failure (cava not
+// installed) hides the strip instead of erroring.
+assert.match(nexus, /NexusCavaModel\.buildConfig\(\)/)
+assert.match(nexus, /NexusCavaModel\.parseFrame/)
+assert.match(nexus, /NexusCavaModel\.cavaCommand/)
+assert.match(nexus, /root\.mediaSelected !== null && root\.mediaSelected\.isPlaying/,
+  'cava runs only while media actually plays')
+assert.match(nexus, /if \(!running && !exitSeen\) root\.cavaAvailable = false/,
+  'a missing cava binary degrades cleanly')
+assert.match(nexus, /root\.settings\.showVisualizer/)
 assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo", "\/proc\/net\/dev", "\/proc\/uptime"\]/,
   'cpu/mem/net/uptime sampling reads proc files with one argument array')
 assert.match(nexus, /command: \["df", "-P", "-k", "\/"\]/,

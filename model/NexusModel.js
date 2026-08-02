@@ -3,13 +3,14 @@
 
 // "settings" is a full page (payloads and Tab cycling reach it) but renders
 // in the tab row as the trailing cog rather than a labelled tab.
-var PAGES = ["overview", "controls", "style", "settings"]
+var PAGES = ["overview", "controls", "style", "keys", "settings"]
 var DEFAULT_PAGE = "overview"
 
 var PAGE_TITLES = {
   overview: "Overview",
   controls: "Controls",
   style: "Style",
+  keys: "Keys",
   settings: "Settings"
 }
 
@@ -20,6 +21,7 @@ var PAGE_PLACEHOLDERS = {
   overview: "",
   controls: "",
   style: "",
+  keys: "",
   settings: ""
 }
 

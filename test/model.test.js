@@ -34,11 +34,12 @@ assert.deepEqual(model.normalizePayload('{"page":"bogus"}', 'style'), { page: 's
 assert.deepEqual(model.normalizePayload('{}', 'bogus'), { page: 'overview' },
   'an invalid fallback cannot smuggle in an unknown page')
 
-// Tab cycling wraps in both directions (settings included) and recovers
-// from invalid state.
+// Tab cycling wraps in both directions (keys and settings included) and
+// recovers from invalid state.
 assert.equal(model.adjacentPage('overview', 1), 'controls')
 assert.equal(model.adjacentPage('controls', 1), 'style')
-assert.equal(model.adjacentPage('style', 1), 'settings')
+assert.equal(model.adjacentPage('style', 1), 'keys')
+assert.equal(model.adjacentPage('keys', 1), 'settings')
 assert.equal(model.adjacentPage('settings', 1), 'overview')
 assert.equal(model.adjacentPage('overview', -1), 'settings')
 assert.equal(model.adjacentPage('style', -1), 'controls')
@@ -46,7 +47,10 @@ assert.equal(model.adjacentPage('bogus', 1), 'overview')
 assert.equal(model.adjacentPage('', -1), 'overview')
 
 // The labelled tab row excludes settings (the cog owns it).
-assert.deepEqual(model.tabPages(), ['overview', 'controls', 'style'])
+assert.deepEqual(model.tabPages(), ['overview', 'controls', 'style', 'keys'])
+
+// The keys page is payload-reachable.
+assert.deepEqual(model.normalizePayload('{"page":"keys"}'), { page: 'keys' })
 
 // Display helpers cover every page and fall back for invalid input. Every
 // page has real content now, so all placeholders are empty.
