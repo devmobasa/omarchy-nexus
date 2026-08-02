@@ -235,6 +235,9 @@ Item {
   // -1 means the tab row owns focus. The cursor resets on page change.
   property int controlCursor: -1
   onPageChanged: controlCursor = -1
+  // The cursor must never outlive its row: when a page loses rows (player
+  // vanished, chip hidden), clamp back into range.
+  onLastCursorIndexChanged: if (controlCursor > lastCursorIndex) controlCursor = lastCursorIndex
 
   readonly property int lastCursorIndex: {
     if (page === "controls") return 8
@@ -402,7 +405,9 @@ Item {
 
   function seekBy(offsetSeconds) {
     var player = mediaSelected
-    if (player && player.canSeek) player.seek(offsetSeconds)
+    if (!player || !player.canSeek) return false
+    player.seek(offsetSeconds)
+    return true
   }
 
   // MPRIS position does not tick on its own; emitting positionChanged() once
@@ -418,26 +423,29 @@ Item {
 
   // Actions route only to the selected representative and only when it
   // reports the capability; a successful action bumps its activity serial.
+  // Returns whether the action was consumed, so the key handler can fall
+  // back to page cycling instead of swallowing the keystroke.
   function mediaAction(kind) {
     var player = mediaSelected
-    if (!player) return
+    if (!player) return false
     if (kind === "playpause") {
       if (player.isPlaying && player.canPause) player.pause()
       else if (!player.isPlaying && player.canPlay) player.play()
-      else return
+      else return false
     } else if (kind === "next") {
-      if (!player.canGoNext) return
+      if (!player.canGoNext) return false
       player.next()
     } else if (kind === "previous") {
-      if (!player.canGoPrevious) return
+      if (!player.canGoPrevious) return false
       player.previous()
     } else {
-      return
+      return false
     }
     var bumped = NexusMediaModel.bumpUserAction(mediaSerials, String(player.dbusName || ""), mediaLastSerial)
     mediaSerials = bumped.serials
     mediaLastSerial = bumped.lastSerial
     refreshMedia()
+    return true
   }
 
   // Player lifecycle and state watcher; empty model while closed.
@@ -568,42 +576,15 @@ Item {
   readonly property int batteryPercent: batteryPresent
     ? NexusMetricsModel.clampPercent(batteryDevice.percentage) : 0
 
-  // ---- metric cards --------------------------------------------------------
-  readonly property var metricCards: {
-    var nowMs = now.getTime()
-    var statStale = NexusMetricsModel.isStale(statSampledAt, nowMs, NexusMetricsModel.CPU_MEM_INTERVAL_MS)
-    var diskStale = NexusMetricsModel.isStale(diskSampledAt, nowMs, NexusMetricsModel.DISK_INTERVAL_MS)
-    return [
-      {
-        label: "CPU",
-        percent: !statStale && cpuValue !== null ? cpuValue : null,
-        stale: statStale && statSampledAt > 0,
-        detail: statStale && statSampledAt > 0 ? "Stale" : "Usage"
-      },
-      {
-        label: "Memory",
-        percent: !statStale && memValue !== null ? memValue : null,
-        stale: statStale && statSampledAt > 0,
-        detail: statStale && statSampledAt > 0 ? "Stale" : "In use"
-      },
-      {
-        label: "Storage",
-        percent: !diskStale && diskValue ? diskValue.percent : null,
-        stale: diskStale && diskSampledAt > 0,
-        detail: !diskStale && diskValue
-          ? NexusMetricsModel.formatGib(diskValue.availableKb) + " free on " + diskValue.mount
-          : (diskStale && diskSampledAt > 0 ? "Stale" : "Used on /")
-      },
-      {
-        label: "Battery",
-        percent: batteryPresent ? batteryPercent : null,
-        stale: false,
-        detail: NexusMetricsModel.batteryDetail(batteryPresent, UPower.onBattery, batteryPercent,
-          batteryDevice ? batteryDevice.timeToEmpty : 0,
-          batteryDevice ? batteryDevice.timeToFull : 0)
-      }
-    ]
-  }
+  // ---- metric staleness ----------------------------------------------------
+  // Plain bool bindings: they re-evaluate with the clock but only notify on
+  // an actual flip, so the meters are not rebuilt every second.
+  readonly property bool statStale: NexusMetricsModel.isStale(
+    statSampledAt, now.getTime(), NexusMetricsModel.CPU_MEM_INTERVAL_MS)
+  readonly property bool diskStale: NexusMetricsModel.isStale(
+    diskSampledAt, now.getTime(), NexusMetricsModel.DISK_INTERVAL_MS)
+  readonly property bool statStaleShown: statStale && statSampledAt > 0
+  readonly property bool diskStaleShown: diskStale && diskSampledAt > 0
 
   // ---- arc meter (declarative Shapes; no Canvas repaints) ------------------
   component ArcMeter: Item {
@@ -807,13 +788,16 @@ Item {
             event.accepted = true
           } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
             var forward = event.key === Qt.Key_Right
-            if (root.page === "controls" && root.controlCursor === 0)
+            var consumed = false
+            if (root.page === "controls" && root.controlCursor === 0) {
               root.setOutputVolume(root.outputVolume + (forward ? 0.05 : -0.05))
-            else if (root.page === "overview" && root.controlCursor === 0)
-              root.mediaAction(forward ? "next" : "previous")
-            else if (root.page === "overview" && root.controlCursor === 1)
-              root.seekBy(forward ? 5 : -5)
-            else
+              consumed = true
+            } else if (root.page === "overview" && root.controlCursor === 0) {
+              consumed = root.mediaAction(forward ? "next" : "previous")
+            } else if (root.page === "overview" && root.controlCursor === 1) {
+              consumed = root.seekBy(forward ? 5 : -5)
+            }
+            if (!consumed)
               root.setPage(NexusModel.adjacentPage(root.page, forward ? 1 : -1))
             event.accepted = true
           } else if (event.key === Qt.Key_Backtab) {
@@ -928,8 +912,18 @@ Item {
             spacing: Style.spacing.controlGap
 
             WheelHandler {
+              // Touchpads deliver a stream of small deltas (and horizontal
+              // scrolls report y === 0); without the guard and the notch
+              // threshold one flick would spin through several pages.
+              property real wheelAccum: 0
+              onActiveChanged: if (!active) wheelAccum = 0
               onWheel: function (event) {
-                root.setPage(NexusModel.adjacentPage(root.page, event.angleDelta.y < 0 ? 1 : -1))
+                if (event.angleDelta.y === 0) return
+                wheelAccum += event.angleDelta.y
+                if (Math.abs(wheelAccum) < 120) return
+                var step = wheelAccum < 0 ? 1 : -1
+                wheelAccum = 0
+                root.setPage(NexusModel.adjacentPage(root.page, step))
               }
             }
 
@@ -1049,10 +1043,16 @@ Item {
 
                 Text {
                   id: elapsedLabel
+                  // Reserve the total label's width so the growing elapsed
+                  // string cannot shift the track geometry mid-drag.
+                  width: totalLabel.width
+                  horizontalAlignment: Text.AlignLeft
                   text: root.mediaSelected
-                    ? NexusMediaModel.formatPlaybackTime(root.seekDragging
-                        ? root.seekPreviewFraction * root.mediaUsableLength
-                        : root.mediaSelected.position)
+                    ? (root.mediaSelected.positionSupported
+                        ? NexusMediaModel.formatPlaybackTime(root.seekDragging
+                            ? root.seekPreviewFraction * root.mediaUsableLength
+                            : root.mediaSelected.position)
+                        : "─")
                     : ""
                   color: Qt.darker(Color.menu.text, 1.4)
                   font.family: Style.font.family
@@ -1062,7 +1062,7 @@ Item {
 
                 Item {
                   id: seekTrack
-                  width: parent.width - elapsedLabel.width - totalLabel.width - Style.space(16)
+                  width: parent.width - elapsedLabel.width - totalLabel.width - 2 * parent.spacing
                   height: Style.space(16)
                   anchors.verticalCenter: parent.verticalCenter
 
@@ -1154,17 +1154,42 @@ Item {
             columnSpacing: Style.spacing.md
             rowSpacing: Style.spacing.md
 
-            Repeater {
-              model: root.metricCards
+            ArcMeter {
+              width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
+              label: "CPU"
+              percent: !root.statStale && root.cpuValue !== null ? root.cpuValue : null
+              stale: root.statStaleShown
+              detail: root.statStaleShown ? "Stale" : "Usage"
+            }
 
-              ArcMeter {
-                required property var modelData
-                width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
-                label: modelData.label
-                percent: modelData.percent
-                stale: modelData.stale
-                detail: modelData.detail
-              }
+            ArcMeter {
+              width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
+              label: "Memory"
+              percent: !root.statStale && root.memValue !== null ? root.memValue : null
+              stale: root.statStaleShown
+              detail: root.statStaleShown ? "Stale" : "In use"
+            }
+
+            ArcMeter {
+              width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
+              label: "Storage"
+              percent: !root.diskStale && root.diskValue ? root.diskValue.percent : null
+              stale: root.diskStaleShown
+              detail: !root.diskStale && root.diskValue
+                ? NexusMetricsModel.formatGib(root.diskValue.availableKb) + " free on " + root.diskValue.mount
+                : (root.diskStaleShown ? "Stale" : "Used on /")
+            }
+
+            ArcMeter {
+              width: (parent.width - (parent.columns - 1) * parent.columnSpacing) / parent.columns
+              label: "Battery"
+              percent: root.batteryPresent ? root.batteryPercent : null
+              stale: false
+              detail: NexusMetricsModel.batteryDetail(root.batteryPresent,
+                root.batteryDevice ? root.batteryDevice.state : 0,
+                UPower.onBattery, root.batteryPercent,
+                root.batteryDevice ? root.batteryDevice.timeToEmpty : 0,
+                root.batteryDevice ? root.batteryDevice.timeToFull : 0)
             }
           }
 
@@ -1181,7 +1206,8 @@ Item {
             readonly property bool netStale: NexusMetricsModel.isStale(
               root.statSampledAt, root.now.getTime(), NexusMetricsModel.CPU_MEM_INTERVAL_MS)
             readonly property real netSharedMax: Math.max(
-              NexusMetricsModel.historyMax(root.netRxHistory, root.netTxHistory), 1)
+              NexusMetricsModel.historyMax(root.netRxHistory, root.netTxHistory),
+              NexusMetricsModel.NET_SCALE_FLOOR)
 
             function polylineFor(history, w, h) {
               var normalized = NexusMetricsModel.sparklinePoints(history, w, h, netSharedMax)

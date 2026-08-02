@@ -60,6 +60,27 @@ assert.equal(metrics.isVirtualInterface('eno1'), false)
 assert.equal(metrics.isVirtualInterface('wlp9s0'), false)
 assert.equal(metrics.isVirtualInterface('enp3s0'), false)
 
+// VPNs, overlay networks, bonds, and VLAN sub-interfaces mirror the links
+// they ride on.
+for (const virtName of ['tailscale0', 'zt5vv2m4rf', 'nordlynx', 'br0', 'bond0', 'eno1.100', 'ppp0', 'gre1']) {
+  assert.equal(metrics.isVirtualInterface(virtName), true, `${virtName} is virtual`)
+}
+
+// Guest ticks are already folded into user/nice by the kernel; the total
+// must not double-count them.
+const guestStat = 'cpu  1000 50 300 8000 200 10 40 0 100 50\n'
+assert.deepEqual(metrics.parseCpuSample(guestStat), { total: 9600, idle: 8200 },
+  'guest columns are excluded from the total')
+
+// An idle link must not draw as a full-height sparkline: the shared max
+// never falls below the tested floor.
+const idleHistory = [280, 310, 295, 342, 300, 288, 320, 305]
+const idleMax = Math.max(metrics.historyMax(idleHistory, []), metrics.NET_SCALE_FLOOR)
+const idlePoints = metrics.sparklinePoints(idleHistory, 200, 40, idleMax)
+for (const p of idlePoints) {
+  assert.ok(p.y > 39, `idle traffic hugs the baseline (y=${p.y})`)
+}
+
 // ---- /proc/uptime parsing --------------------------------------------------
 
 assert.equal(metrics.parseUptime('12345.67 89012.34\n'), 12345.67)
@@ -155,19 +176,34 @@ assert.equal(metrics.isStale(1000, 1000 + 2000 * metrics.STALE_FACTOR + 1, 2000)
 
 // ---- battery ---------------------------------------------------------------
 
-assert.equal(metrics.batteryDetail(false, false, 0), 'No battery')
-assert.equal(metrics.batteryDetail(true, true, 80), 'On battery')
-assert.equal(metrics.batteryDetail(true, false, 80), 'Charging')
-assert.equal(metrics.batteryDetail(true, false, 100), 'Charged')
+const BS = metrics.BATTERY_STATE
+
+assert.equal(metrics.batteryDetail(false, BS.Unknown, false, 0), 'No battery')
+
+// The device's own state is primary; onBattery only breaks Unknown.
+assert.equal(metrics.batteryDetail(true, BS.Discharging, true, 80), 'On battery')
+assert.equal(metrics.batteryDetail(true, BS.Charging, false, 80), 'Charging')
+assert.equal(metrics.batteryDetail(true, BS.FullyCharged, false, 100), 'Charged')
+assert.equal(metrics.batteryDetail(true, BS.Unknown, true, 80), 'On battery',
+  'Unknown state falls back to the daemon flag')
+assert.equal(metrics.batteryDetail(true, BS.Unknown, false, 80), 'Charging')
+
+// A threshold-parked battery is not "charging" just because AC is attached.
+assert.equal(metrics.batteryDetail(true, BS.PendingCharge, false, 80),
+  'Plugged in — not charging')
+assert.equal(metrics.batteryDetail(true, BS.FullyCharged, false, 80), 'Holding at 80%')
+assert.equal(metrics.batteryDetail(true, BS.Empty, true, 0), 'Empty')
+assert.equal(metrics.batteryDetail(true, BS.PendingDischarge, true, 80), 'On battery')
 
 // Time estimates render when UPower knows them; 0 means unknown and falls
 // back to the bare state.
-assert.equal(metrics.batteryDetail(true, true, 80, 2 * 3600 + 13 * 60),
+assert.equal(metrics.batteryDetail(true, BS.Discharging, true, 80, 2 * 3600 + 13 * 60),
   'On battery — 2 h 13 m left')
-assert.equal(metrics.batteryDetail(true, true, 80, 0), 'On battery')
-assert.equal(metrics.batteryDetail(true, false, 80, 0, 45 * 60), 'Charging — 45 m to full')
-assert.equal(metrics.batteryDetail(true, false, 80, 0, 0), 'Charging')
-assert.equal(metrics.batteryDetail(true, false, 100, 0, 45 * 60), 'Charged',
+assert.equal(metrics.batteryDetail(true, BS.Discharging, true, 80, 0), 'On battery')
+assert.equal(metrics.batteryDetail(true, BS.Charging, false, 80, 0, 45 * 60),
+  'Charging — 45 m to full')
+assert.equal(metrics.batteryDetail(true, BS.Charging, false, 80, 0, 0), 'Charging')
+assert.equal(metrics.batteryDetail(true, BS.Charging, false, 100, 0, 45 * 60), 'Charged',
   'a full battery never shows a countdown')
 
 assert.equal(metrics.clampPercent(0.834), 83)

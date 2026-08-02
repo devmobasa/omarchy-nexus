@@ -49,10 +49,15 @@ assert.match(nexus, /Hyprland\.focusedMonitor/, 'resolution starts from the focu
 assert.match(nexus, /ToplevelManager\.activeToplevel/, 'falls back to the active toplevel screen')
 assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or closes')
 
-// Closed-state dormancy and animation policy. Four opened-gated timers:
-// clock, both samplers, and the media position tick.
+// Closed-state dormancy and animation policy. Five timers total; four are
+// gated on `opened` (clock, both samplers, media position tick). The fifth,
+// pendingClearTimer, is a one-shot 400 ms clear started only from
+// dispatchControl, which no-ops while closed. Pinning the total means any
+// new timer fails this test until it is reviewed for dormancy.
+assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 5,
+  'the timer inventory is pinned: a new timer must be reviewed for dormancy')
 assert.equal((nexus.match(/running: root\.opened/g) || []).length, 4,
-  'every timer stops while the panel is closed')
+  'the four recurring timers are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
 assert.doesNotMatch(nexus, /execDetached|hyprctl|bash -c/, 'plugin builds no shell commands')
 
@@ -82,7 +87,7 @@ assert.match(nexus, /root\.settings\.showNetwork/, 'showNetwork gates the networ
 assert.match(nexus, /FileView \{/, 'static system facts use FileView, not processes')
 assert.match(nexus, /\/proc\/sys\/kernel\/hostname/, 'hostname reads from proc')
 assert.match(nexus, /\/proc\/sys\/kernel\/osrelease/, 'kernel version reads from proc')
-assert.doesNotMatch(nexus, /blockLoading/, 'FileView reads stay async like the rest of the shell')
+assert.doesNotMatch(nexus, /blockLoading|blockAllReads/, 'FileView reads stay async like the rest of the shell')
 assert.match(nexus, /NexusMetricsModel\.fetchLine/, 'the fetch line builds through the tested model')
 assert.match(nexus, /root\.settings\.showFetch/, 'showFetch gates the fetch row')
 
@@ -190,9 +195,22 @@ assert.match(nexus, /WheelHandler \{/, 'the tab row cycles on mouse wheel')
 assert.match(nexus, /function setPage\(next\)/, 'page changes route through setPage')
 assert.match(nexus, /pageShift/, 'page content slides directionally')
 assert.match(nexus, /readonly property int lastCursorIndex/, 'the cursor is page-aware')
-assert.match(nexus, /openMenuRoute\("style\.theme"\)\s*\n\s*\}/m, 'style rows are cursor rows')
-assert.equal((nexus.match(/hasCursor: root\.controlCursor === /g) || []).length >= 5, true,
-  'keyboard cursor visuals cover the new rows')
+assert.match(nexus, /onLastCursorIndexChanged: if \(controlCursor > lastCursorIndex\) controlCursor = lastCursorIndex/,
+  'the cursor clamps when its page loses rows')
+assert.match(nexus, /hasCursor: root\.controlCursor === 0 && root\.page === "style"/,
+  'style rows carry a page-scoped keyboard cursor')
+assert.match(nexus, /hasCursor: root\.controlCursor === 2 && root\.page === "overview"/,
+  'the overview player-cycle row is a cursor row')
+assert.match(nexus, /hasCursor: root\.controlCursor === 7 && root\.page === "controls"/,
+  'the capture row is a cursor row')
+assert.match(nexus, /hasCursor: root\.controlCursor === 8 && root\.page === "controls"/,
+  'the power row is a cursor row')
+assert.equal((nexus.match(/hasCursor: root\.controlCursor === \d && root\.page === "style"/g) || []).length, 2,
+  'both style rows are cursor rows')
+assert.match(nexus, /if \(event\.angleDelta\.y === 0\) return/,
+  'horizontal wheel deltas never cycle pages')
+assert.match(nexus, /if \(!consumed\)\s*\n\s*root\.setPage/,
+  'Left\/Right falls back to page cycling when the focused row rejects it')
 
 // Theme integration comes from shared tokens only.
 assert.match(nexus, /import qs\.Commons/, 'uses shared Color/Style/Border singletons')

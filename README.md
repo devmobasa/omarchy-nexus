@@ -13,8 +13,9 @@ keystroke away, fully dormant when closed.
   capability-gated) and a player-switcher chip when several players are
   active; capability-gated transport; CPU, memory, storage, and battery arc
   meters — battery with time-to-empty/full when UPower knows it; live
-  network throughput as a dual down/up sparkline (virtual interfaces
-  excluded so container and VPN traffic never double-counts).
+  network throughput as a dual down/up sparkline (loopback, container
+  bridges, tunnels, and other common virtual interfaces are excluded so
+  their mirrored traffic does not double-count).
 - **Controls** — output volume slider, output/input mute, Do Not Disturb,
   night light, stay awake, and Bluetooth, plus Capture and Power quick
   actions that hand off to the Omarchy menu (its own second click confirms
@@ -72,7 +73,7 @@ hyprctl configerrors
 | `Esc` | Close the panel |
 | `Tab` / `Shift+Tab` | Cycle pages |
 | `Down` / `Up` | Walk the current page's rows |
-| `Enter` / `Space` | Activate the focused row |
+| `Enter` / `Space` | Activate the focused row — on the volume row it toggles mute; the seek bar has no activate action |
 | `Left` / `Right` | Act on the focused row when it can — volume slider (±5%), media transport (previous/next), seek bar (±5 s) — otherwise cycle pages |
 
 ## Settings
@@ -171,7 +172,7 @@ The restart matters: current Quickshell builds do not expose
 already-compiled QML — a rescan alone keeps serving the old component.
 
 Design notes and the full milestone history live in
-[docs/PLAN-v9.md](docs/PLAN-v9.md).
+[docs/PLAN-v10.md](docs/PLAN-v10.md).
 
 ## License
 

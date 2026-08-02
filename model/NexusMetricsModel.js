@@ -14,8 +14,14 @@ var DISK_INTERVAL_MS = 30000
 var STALE_FACTOR = 3
 var NET_HISTORY_CAP = 30
 
+// Sparkline scale floor: idle background chatter (ARP, mDNS, RA, NTP) runs a
+// few hundred B/s. Without a floor the window max always maps to the top
+// pixel, so an idle link would draw identically to a saturated one.
+var NET_SCALE_FLOOR = 65536
+
 // Parse the aggregate "cpu " line of /proc/stat into cumulative tick counters.
-// idle time includes iowait; total is the sum of every column.
+// idle time includes iowait; total sums columns 1-8 only — the guest columns
+// are excluded because the kernel already folds guest time into user/nice.
 function parseCpuSample(text) {
   var lines = String(text == null ? "" : text).split("\n")
   for (var i = 0; i < lines.length; i++) {
@@ -27,7 +33,7 @@ function parseCpuSample(text) {
     for (var j = 0; j < fields.length; j++) {
       var value = Number(fields[j])
       if (!isFinite(value) || value < 0) return null
-      total += value
+      if (j < 8) total += value
     }
     var idle = Number(fields[3]) + Number(fields[4])
     return { total: total, idle: idle }
@@ -67,11 +73,16 @@ function parseMemInfo(text) {
 }
 
 // Virtual interfaces that would double-count real traffic (loopback mirrors
-// everything local; tunnels/wireguard mirror the physical link they ride on;
-// container bridges and veth pairs mirror container traffic).
-var VIRTUAL_INTERFACE_PREFIXES = ["lo", "docker", "br-", "veth", "tun", "tap", "virbr", "vnet", "wg"]
+// everything local; tunnels/VPNs mirror the physical link they ride on;
+// container bridges and veth pairs mirror container traffic). No standard
+// predictable or legacy NIC name begins with any of these.
+var VIRTUAL_INTERFACE_PREFIXES = ["lo", "docker", "br", "veth", "tun", "tap",
+  "virbr", "vnet", "vmnet", "wg", "tailscale", "zt", "nordlynx", "ipsec",
+  "ppp", "bond", "gre", "sit", "ifb", "dummy"]
 
 function isVirtualInterface(name) {
+  // VLAN sub-interfaces (eno1.100) mirror the parent link they ride on.
+  if (name.indexOf(".") !== -1) return true
   for (var i = 0; i < VIRTUAL_INTERFACE_PREFIXES.length; i++) {
     var prefix = VIRTUAL_INTERFACE_PREFIXES[i]
     if (name === prefix || name.indexOf(prefix) === 0) return true
@@ -235,19 +246,35 @@ function isStale(sampledAtMs, nowMs, intervalMs) {
   return Number(nowMs) - sampled > Number(intervalMs) * STALE_FACTOR
 }
 
-// Battery detail line from reactive UPower state; presence decides between a
-// reading and the normal desktop no-battery fallback. Time estimates are
-// optional — UPower reports 0 when it does not know, which renders as the
-// bare state rather than a fake countdown.
-function batteryDetail(present, onBattery, percent, timeToEmptySec, timeToFullSec) {
+// UPowerDeviceState values, mirrored so the model stays QML-free.
+var BATTERY_STATE = { Unknown: 0, Charging: 1, Discharging: 2, Empty: 3,
+  FullyCharged: 4, PendingCharge: 5, PendingDischarge: 6 }
+
+// Battery detail line from reactive UPower state. The device's own state
+// enum is primary; the system-wide onBattery flag is only the fallback when
+// the device reports Unknown (a threshold-parked battery is not "charging"
+// just because AC is attached). Time estimates are optional — UPower reports
+// 0 when it does not know, which renders as the bare state rather than a
+// fake countdown.
+function batteryDetail(present, state, onBattery, percent, timeToEmptySec, timeToFullSec) {
   if (!present) return "No battery"
-  if (!onBattery) {
-    if (Number(percent) >= 100) return "Charged"
-    var toFull = formatDuration(timeToFullSec)
-    return toFull ? "Charging — " + toFull + " to full" : "Charging"
+  var s = Number(state)
+  if (!isFinite(s) || s === BATTERY_STATE.Unknown)
+    s = onBattery ? BATTERY_STATE.Discharging : BATTERY_STATE.Charging
+  var pct = Number(percent)
+
+  if (s === BATTERY_STATE.Discharging || s === BATTERY_STATE.PendingDischarge) {
+    var left = formatDuration(timeToEmptySec)
+    return left ? "On battery — " + left + " left" : "On battery"
   }
-  var left = formatDuration(timeToEmptySec)
-  return left ? "On battery — " + left + " left" : "On battery"
+  if (s === BATTERY_STATE.Empty) return "Empty"
+  // Firmware charge thresholds surface as FullyCharged well below 100% or
+  // as PendingCharge; neither should read as an active charge.
+  if (s === BATTERY_STATE.FullyCharged) return pct < 99 ? "Holding at " + pct + "%" : "Charged"
+  if (s === BATTERY_STATE.PendingCharge) return "Plugged in — not charging"
+  if (pct >= 100) return "Charged"
+  var toFull = formatDuration(timeToFullSec)
+  return toFull ? "Charging — " + toFull + " to full" : "Charging"
 }
 
 function clampPercent(value01) {
@@ -262,6 +289,8 @@ if (typeof module !== "undefined") {
     DISK_INTERVAL_MS: DISK_INTERVAL_MS,
     STALE_FACTOR: STALE_FACTOR,
     NET_HISTORY_CAP: NET_HISTORY_CAP,
+    NET_SCALE_FLOOR: NET_SCALE_FLOOR,
+    BATTERY_STATE: BATTERY_STATE,
     VIRTUAL_INTERFACE_PREFIXES: VIRTUAL_INTERFACE_PREFIXES,
     isVirtualInterface: isVirtualInterface,
     parseCpuSample: parseCpuSample,
