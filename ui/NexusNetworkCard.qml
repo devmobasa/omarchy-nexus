@@ -1,11 +1,12 @@
 import "../model/NexusMetricsModel.js" as NexusMetricsModel
+import "../model/NexusModel.js" as NexusModel
 import QtQuick
 import QtQuick.Shapes
 import qs.Commons
 import qs.Ui
 
 BorderSurface {
-    id: networkCard
+    id: netCard
 
     required property var nexus
     readonly property bool netStale: NexusMetricsModel.isStale(nexus.statSampledAt, nexus.now.getTime(), NexusMetricsModel.CPU_MEM_INTERVAL_MS)
@@ -17,8 +18,6 @@ BorderSurface {
         for (var i = 0; i < normalized.length; i++) points.push(Qt.point(normalized[i].x, normalized[i].y))
         return points;
     }
-
-    id: netCard
 
     visible: nexus.page === NexusModel.PAGE_OVERVIEW && nexus.settings.showMetrics && nexus.settings.showNetwork
     width: parent.width

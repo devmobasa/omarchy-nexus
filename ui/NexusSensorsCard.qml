@@ -1,3 +1,4 @@
+import "../model/NexusModel.js" as NexusModel
 import QtQuick
 import qs.Commons
 import qs.Ui

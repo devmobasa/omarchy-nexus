@@ -1,4 +1,5 @@
 import "../model/NexusMetricsModel.js" as NexusMetricsModel
+import "../model/NexusModel.js" as NexusModel
 import QtQuick
 import Quickshell.Services.UPower
 import qs.Commons

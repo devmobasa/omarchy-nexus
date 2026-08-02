@@ -13,8 +13,6 @@ Item {
     readonly property color trackColor: nexus.softText(0.12)
     readonly property color valueColor: stale || percent === null ? Qt.darker(Color.menu.text, 1.6) : Color.accent
 
-    id: meter
-
     implicitHeight: meterColumn.implicitHeight
 
     Column {

@@ -1,4 +1,5 @@
 import "../model/NexusModel.js" as NexusModel
+import "../model/NexusSuiteModel.js" as NexusSuiteModel
 import QtQuick
 import qs.Commons
 import qs.Ui
