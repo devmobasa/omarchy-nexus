@@ -10,6 +10,7 @@ Item {
     property var percent: null
     property bool stale: false
     property string detail: ""
+    property var history: []
     readonly property color trackColor: nexus.softText(0.12)
     readonly property color valueColor: stale || percent === null ? Qt.darker(Color.menu.text, 1.6) : Color.accent
 
@@ -77,6 +78,14 @@ Item {
                 font.bold: true
             }
 
+        }
+
+        NexusSparkline {
+            width: Style.space(64)
+            height: Style.space(12)
+            anchors.horizontalCenter: parent.horizontalCenter
+            history: meter.stale ? [] : meter.history
+            lineColor: meter.nexus.softAccent(0.55)
         }
 
         Text {

@@ -18,6 +18,8 @@ Item {
     property var cpuValue: null
     property var memValue: null
     property var diskValue: null
+    property var cpuHistory: []
+    property var memHistory: []
     property double statSampledAt: 0
     property double diskSampledAt: 0
     // Network throughput shares the same single sampler process; rates derive
@@ -50,6 +52,8 @@ Item {
         netTxRate = null;
         netRxHistory = [];
         netTxHistory = [];
+        cpuHistory = [];
+        memHistory = [];
     }
 
     FileView {
@@ -77,9 +81,14 @@ Item {
                 if (parsed.cpu) {
                     state.cpuValue = NexusMetricsModel.cpuPercent(state.cpuPrevSample, parsed.cpu);
                     state.cpuPrevSample = parsed.cpu;
+                    if (state.cpuValue !== null)
+                        state.cpuHistory = NexusMetricsModel.pushHistory(state.cpuHistory, state.cpuValue, NexusMetricsModel.STAT_HISTORY_CAP);
+
                 }
-                if (parsed.mem)
+                if (parsed.mem) {
                     state.memValue = parsed.mem.percent;
+                    state.memHistory = NexusMetricsModel.pushHistory(state.memHistory, state.memValue, NexusMetricsModel.STAT_HISTORY_CAP);
+                }
 
                 if (parsed.uptimeSeconds !== null)
                     state.uptimeSeconds = parsed.uptimeSeconds;

@@ -20,7 +20,7 @@ Column {
             id: clipboardTitle
 
             anchors.left: parent.left
-            text: nexus.copiedPreview !== "" ? "Copied: " + nexus.copiedPreview : nexus.clipboardRows.length + " recent clips — click to copy"
+            text: nexus.copiedPreview !== "" ? "Copied: " + nexus.copiedPreview : nexus.clipboardAllRows.length + " clips — click to copy, 󰐃 to pin"
             color: nexus.copiedPreview !== "" ? Color.accent : Color.menu.text
             width: parent.width - clipboardManagerButton.width - Style.space(8)
             font.family: Style.font.family
@@ -42,7 +42,7 @@ Column {
     }
 
     Text {
-        visible: nexus.clipboardRows.length === 0
+        visible: nexus.clipboardAllRows.length === 0
         width: parent.width
         text: "Clipboard history is empty."
         color: Qt.darker(Color.menu.text, 1.4)
@@ -50,14 +50,19 @@ Column {
         font.pixelSize: Style.font.bodySmall
     }
 
+    // One list: pinned snippets first (accent pin, click to unpin), then
+    // the history rows (dim pin appears to pin). Row click always copies.
     Repeater {
-        model: nexus.clipboardRows
+        model: nexus.clipboardAllRows
 
         CursorSurface {
             id: clipRow
 
             required property var modelData
             required property int index
+
+            readonly property bool pinned: modelData.pinned === true
+            readonly property bool pinnable: modelData.kind === "text"
 
             width: parent.width
             implicitHeight: clipText.implicitHeight + Style.space(8)
@@ -82,15 +87,35 @@ Column {
                 id: clipText
 
                 anchors.left: parent.left
-                anchors.right: parent.right
+                anchors.right: pinAction.visible ? pinAction.left : parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Style.space(10)
-                anchors.rightMargin: Style.space(10)
+                anchors.rightMargin: Style.space(8)
                 text: clipRow.modelData.preview
                 color: clipRow.modelData.kind === "image" ? Qt.darker(Color.menu.text, 1.4) : Color.menu.text
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
+            }
+
+            Text {
+                id: pinAction
+
+                visible: clipRow.pinnable
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: Style.space(10)
+                text: "󰐃"
+                color: clipRow.pinned ? Color.accent : Qt.darker(Color.menu.text, 1.6)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    onClicked: nexus.togglePinClipboard(clipRow.modelData)
+                }
+
             }
 
         }

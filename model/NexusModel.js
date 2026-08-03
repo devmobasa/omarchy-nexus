@@ -34,7 +34,9 @@ var CONTROLS_ROWS = {
 var CONTROLS_LAST_ROW = CONTROLS_ROWS.POWER
 
 var OVERVIEW_ROWS = { TRANSPORT: 0, SEEK: 1, PLAYER_CHIP: 2 }
-var STYLE_ROWS = { THEME: 0, BACKGROUND: 1 }
+// WALLPAPERS is conditional: the row exists only while community.wallpaper-hub
+// is installed and enabled (the facade's lastCursorIndex reflects that).
+var STYLE_ROWS = { THEME: 0, BACKGROUND: 1, WALLPAPERS: 2 }
 
 // Fixed Omarchy menu routes for delegated actions.
 var MENU_ROUTES = {

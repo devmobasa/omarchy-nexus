@@ -135,6 +135,15 @@ function focusDispatch(address) {
   return 'hl.dsp.focus({ window = "address:' + addr + '" })'
 }
 
+// Graceful close (never kill): the compositor asks the app to close, so
+// unsaved-changes prompts still work — they surface when the window is
+// restored or the app raises them itself.
+function closeDispatch(address) {
+  var addr = ensure0x(address)
+  if (!isValidAddress(addr)) return ""
+  return 'hl.dsp.window.close({ window = "address:' + addr + '" })'
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     MINIMIZED_WORKSPACE: MINIMIZED_WORKSPACE,
@@ -149,6 +158,7 @@ if (typeof module !== "undefined") {
     originLabel: originLabel,
     rows: rows,
     restoreDispatch: restoreDispatch,
-    focusDispatch: focusDispatch
+    focusDispatch: focusDispatch,
+    closeDispatch: closeDispatch
   }
 }

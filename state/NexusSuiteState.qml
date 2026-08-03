@@ -38,11 +38,16 @@ Item {
     readonly property string notificationsFile: NexusSuiteModel.notificationsPath(Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
     property string notificationsText: ""
     readonly property var notificationRows: NexusSuiteModel.parseNotifications(notificationsText, 40)
+    readonly property int pendingNotificationCount: NexusSuiteModel.pendingCount(notificationsText)
     // Clipboard history (omarchy.clipboard state file): text rows copy back
     // via wl-copy; image rows defer to the full first-party manager.
     readonly property string clipboardFile: NexusSuiteModel.clipboardPath(Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
     property string clipboardText: ""
     readonly property var clipboardRows: NexusSuiteModel.parseClipboard(clipboardText, 15)
+    // Pinned snippets (Nexus's own state file), shown above the history.
+    readonly property string pinsFile: NexusSuiteModel.pinsPath(Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
+    property string pinsText: ""
+    readonly property var pinnedRows: NexusSuiteModel.parsePins(pinsText)
     property string copiedPreview: ""
     // Quick notes: one markdown file, debounce-autosaved.
     readonly property string notesFile: NexusSuiteModel.notesPath(Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
@@ -83,8 +88,13 @@ Item {
     }
 
     function clearNotificationHistory() {
+        // The Alerts page shows pending + past merged, so clearing clears
+        // both lists, not just the 15-minute "past" window.
         if (dndService && typeof dndService.clearPast === "function")
             dndService.clearPast();
+
+        if (dndService && typeof dndService.clearPending === "function")
+            dndService.clearPending();
 
     }
 
@@ -96,9 +106,24 @@ Item {
             nexus.summonSibling("omarchy.clipboard");
             return ;
         }
-        copyProcess.command = NexusSuiteModel.copyCommand(row.text);
+        copyText(row.text, row.preview);
+    }
+
+    function copyText(text, preview) {
+        copyProcess.command = NexusSuiteModel.copyCommand(text);
         copyProcess.running = true;
-        copiedPreview = row.preview;
+        copiedPreview = String(preview == null ? "" : preview);
+    }
+
+    function togglePinRow(row) {
+        if (!row || row.kind !== "text")
+            return ;
+
+        var texts = [];
+        for (var i = 0; i < pinnedRows.length; i++) texts.push(pinnedRows[i].text)
+        var serialized = NexusSuiteModel.serializePins(NexusSuiteModel.togglePin(texts, row.text));
+        pinsText = serialized;
+        pinsWriter.setText(serialized);
     }
 
     function saveNotes() {
@@ -183,6 +208,24 @@ Item {
         onLoaded: state.clipboardText = text()
         onLoadFailed: state.clipboardText = ""
         onFileChanged: reload()
+    }
+
+    FileView {
+        path: state.opened ? state.pinsFile : ""
+        printErrors: false
+        watchChanges: true
+        onLoaded: state.pinsText = text()
+        onLoadFailed: state.pinsText = ""
+        onFileChanged: reload()
+    }
+
+    FileView {
+        id: pinsWriter
+
+        path: state.pinsFile
+        printErrors: false
+        atomicWrites: true
+        onSaved: reload()
     }
 
     Process {

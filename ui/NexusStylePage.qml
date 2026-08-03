@@ -48,6 +48,19 @@ Column {
             onClicked: nexus.openMenuRoute(NexusModel.MENU_ROUTES.background)
         }
 
+        Button {
+            visible: nexus.wallpaperHubAvailable
+            iconText: "󰸉"
+            text: "Wallpaper Hub"
+            hasCursor: nexus.controlCursor === NexusModel.STYLE_ROWS.WALLPAPERS && nexus.page === NexusModel.PAGE_STYLE
+            onHovered: function(h) {
+                if (h)
+                    nexus.controlCursor = NexusModel.STYLE_ROWS.WALLPAPERS;
+
+            }
+            onClicked: nexus.summonSibling("community.wallpaper-hub")
+        }
+
     }
 
 }

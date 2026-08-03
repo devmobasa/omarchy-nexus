@@ -14,6 +14,7 @@ Item {
     property string omarchyPath: Quickshell.env("OMARCHY_PATH")
     property var shell: null
     property var manifest: null
+    property var pluginRegistry: null
     property bool opened: false
     property string page: NexusModel.DEFAULT_PAGE
     property var targetScreen: null
@@ -22,6 +23,13 @@ Item {
     property real pageShift: 0
     property date now: new Date()
     property string pendingActionName: ""
+    property alias armedCloseAddress: minimizer.armedCloseAddress
+    // Command palette: typing anywhere (or "/") opens it; entries assemble
+    // from every actionable thing the panel knows about.
+    property alias paletteOpen: palette.open
+    property alias paletteQuery: palette.query
+    property alias paletteCursor: palette.cursor
+    readonly property var paletteResults: palette.results
     readonly property string pluginId: manifest && manifest.id ? manifest.id : "community.omarchy-nexus"
     readonly property real volumeStep: 0.05
     readonly property int seekStepSeconds: 5
@@ -69,7 +77,14 @@ Item {
     readonly property var nextEvent: suite.nextEvent
     readonly property var pomodoroSession: suite.pomodoroSession
     readonly property var notificationRows: suite.notificationRows
+    readonly property int pendingNotificationCount: suite.pendingNotificationCount
+    readonly property var failedUnits: alerts.failedUnits
+    readonly property string unitBusy: alerts.unitBusy
+    readonly property string unitError: alerts.unitError
     readonly property var clipboardRows: suite.clipboardRows
+    readonly property var pinnedClipboardRows: suite.pinnedRows
+    // Keyboard cursor and activation walk pins-then-history as one list.
+    readonly property var clipboardAllRows: suite.pinnedRows.concat(suite.clipboardRows)
     readonly property var minimizerRows: minimizer.minimizerRows
     readonly property string copiedPreview: suite.copiedPreview
     readonly property string notesFile: suite.notesFile
@@ -90,6 +105,8 @@ Item {
     readonly property var netTxRate: metrics.netTxRate
     readonly property var netRxHistory: metrics.netRxHistory
     readonly property var netTxHistory: metrics.netTxHistory
+    readonly property var cpuHistory: metrics.cpuHistory
+    readonly property var memHistory: metrics.memHistory
     readonly property var uptimeSeconds: metrics.uptimeSeconds
     readonly property string hostName: metrics.hostName
     readonly property string kernelVersion: metrics.kernelVersion
@@ -113,33 +130,16 @@ Item {
         return parts.join(" · ");
     }
     readonly property var settingsRows: NexusSettingsRows.rows()
-    readonly property int lastCursorIndex: {
-        if (page === NexusModel.PAGE_CONTROLS)
-            return NexusModel.CONTROLS_LAST_ROW;
+    // isEnabled() is a plain function QML cannot track, so the binding also
+    // reads registryRevision — the host's own idiom for registry reactivity.
+    readonly property bool wallpaperHubAvailable: {
+        if (!pluginRegistry)
+            return false;
 
-        if (page === NexusModel.PAGE_OVERVIEW) {
-            if (!settings.showMedia || mediaSelected === null)
-                return -1;
-
-            return mediaPlayerCount > 1 ? 2 : 1;
-        }
-        if (page === NexusModel.PAGE_STYLE)
-            return NexusModel.STYLE_ROWS.BACKGROUND;
-
-        if (page === NexusModel.PAGE_SETTINGS)
-            return settingsRows.length - 1;
-
-        if (page === NexusModel.PAGE_MEDIA)
-            return mediaAllPlayers.length - 1;
-
-        if (page === NexusModel.PAGE_CLIPBOARD)
-            return clipboardRows.length - 1;
-
-        if (page === NexusModel.PAGE_MINIMIZER)
-            return minimizerRows.length - 1;
-
-        return -1;
+        const revision = pluginRegistry.registryRevision;
+        return !!pluginRegistry.installedPlugins["community.wallpaper-hub"] && pluginRegistry.isEnabled("community.wallpaper-hub") === true;
     }
+    readonly property int lastCursorIndex: nav.lastCursorIndex
 
     function softText(alpha) {
         return Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, alpha);
@@ -178,12 +178,14 @@ Item {
         targetScreen = null;
         controlCursor = -1;
         pendingActionName = "";
+        closePalette();
         media.resetSession();
         metrics.resetSession();
         sensors.resetSession();
         cava.resetSession();
         suite.resetTransient();
         minimizer.resetSession();
+        alerts.resetSession();
         persistence.resetTransient();
         closingFromHost = false;
     }
@@ -209,35 +211,8 @@ Item {
         });
     }
 
-    function targetScreenForOpen() {
-        const screens = Quickshell.screens || [];
-        const wanted = root.settings.monitor;
-        if (wanted && wanted !== "focused") {
-            for (let i = 0; i < screens.length; i++) {
-                if (String(screens[i].name || "") === wanted)
-                    return screens[i];
-
-            }
-        }
-        const focused = Hyprland.focusedMonitor;
-        for (let i = 0; i < screens.length; i++) {
-            const monitor = Hyprland.monitorFor(screens[i]);
-            if (focused && monitor === focused)
-                return screens[i];
-
-            if (focused && monitor && monitor.id === focused.id)
-                return screens[i];
-
-            if (focused && String(screens[i].name || "") === String(focused.name || ""))
-                return screens[i];
-
-        }
-        const active = ToplevelManager.activeToplevel;
-        if (active && active.screens && active.screens.length > 0)
-            return active.screens[0];
-
-        return screens.length > 0 ? screens[0] : null;
-    }
+    function targetScreenForOpen() { return nav.targetScreenForOpen() }
+    function activateControl(index) { nav.activateControl(index) }
 
     function dispatchControl(name, action) {
         if (!opened || pendingActionName !== "")
@@ -257,61 +232,6 @@ Item {
         pageShift = forward ? 1 : -1;
         page = next;
         pageSlideAnimation.restart();
-    }
-
-    function activateControl(index) {
-        if (page === NexusModel.PAGE_OVERVIEW) {
-            if (index === NexusModel.OVERVIEW_ROWS.TRANSPORT)
-                mediaAction("playpause");
-            else if (index === NexusModel.OVERVIEW_ROWS.PLAYER_CHIP)
-                cycleMediaPlayer();
-        } else if (page === NexusModel.PAGE_CONTROLS) {
-            if (index === NexusModel.CONTROLS_ROWS.VOLUME)
-                dispatchControl("mute-output", toggleOutputMute);
-            else if (index === NexusModel.CONTROLS_ROWS.MUTE)
-                dispatchControl("mute-output", toggleOutputMute);
-            else if (index === NexusModel.CONTROLS_ROWS.MICROPHONE)
-                dispatchControl("mute-microphone", toggleInputMute);
-            else if (index === NexusModel.CONTROLS_ROWS.DND)
-                dispatchControl("dnd", toggleDnd);
-            else if (index === NexusModel.CONTROLS_ROWS.NIGHT_LIGHT)
-                dispatchControl("night-light", toggleNightlight);
-            else if (index === NexusModel.CONTROLS_ROWS.STAY_AWAKE)
-                dispatchControl("stay-awake", toggleStayAwake);
-            else if (index === NexusModel.CONTROLS_ROWS.BLUETOOTH)
-                dispatchControl("bluetooth", toggleBluetooth);
-            else if (index === NexusModel.CONTROLS_ROWS.GAME_MODE)
-                toggleGameMode();
-            else if (index === NexusModel.CONTROLS_ROWS.POMODORO)
-                togglePomodoro();
-            else if (index === NexusModel.CONTROLS_ROWS.CAPTURE)
-                openMenuRoute(NexusModel.MENU_ROUTES.capture);
-            else if (index === NexusModel.CONTROLS_ROWS.POWER)
-                openMenuRoute(NexusModel.MENU_ROUTES.power);
-        } else if (page === NexusModel.PAGE_STYLE) {
-            if (index === NexusModel.STYLE_ROWS.THEME)
-                openMenuRoute(NexusModel.MENU_ROUTES.theme);
-            else if (index === NexusModel.STYLE_ROWS.BACKGROUND)
-                openMenuRoute(NexusModel.MENU_ROUTES.background);
-        } else if (page === NexusModel.PAGE_SETTINGS) {
-            const row = settingsRows[index];
-            if (row)
-                updateSetting(row.key, settings[row.key] !== true);
-
-        } else if (page === NexusModel.PAGE_MEDIA) {
-            const player = mediaAllPlayers[index];
-            if (player) {
-                selectPlayerByObject(player);
-                if (player.isPlaying && player.canPause)
-                    player.pause();
-                else if (!player.isPlaying && player.canPlay)
-                    player.play();
-            }
-        } else if (page === NexusModel.PAGE_CLIPBOARD) {
-            copyClipboardRow(clipboardRows[index]);
-        } else if (page === NexusModel.PAGE_MINIMIZER) {
-            restoreMinimized(minimizerRows[index]);
-        }
     }
 
     function openMenuRoute(route) {
@@ -343,8 +263,21 @@ Item {
     function toggleGameMode() { persistence.toggleGameMode() }
     function togglePomodoro() { suite.togglePomodoro() }
     function clearNotificationHistory() { suite.clearNotificationHistory() }
+    function markAllNotificationsSeen() { alerts.markAllSeen() }
+    function dismissNotificationRow(row) { alerts.dismissRow(row) }
+    function notificationLiveAction(row) { return alerts.liveAction(row) }
+    function invokeNotificationAction(row) { alerts.invokeAction(row) }
+    function restartUnit(row) { alerts.runUnitAction("restart", row) }
+    function resetFailedUnit(row) { alerts.runUnitAction("reset-failed", row) }
     function copyClipboardRow(row) { suite.copyClipboardRow(row) }
+    function togglePinClipboard(row) { suite.togglePinRow(row) }
+    function copyText(text, preview) { suite.copyText(text, preview) }
     function restoreMinimized(row) { minimizer.restoreRow(row) }
+    function closeMinimized(row) { minimizer.closeMinimized(row) }
+    function openPalette(seed) { palette.openPalette(seed) }
+    function closePalette() { palette.closePalette() }
+    function runPaletteEntry(entry) { palette.runEntry(entry) }
+    function refreshBinds() { controls.refreshBinds() }
     function updateNotes(text) { suite.updateNotes(text) }
     function refreshMedia() { media.refreshMedia() }
     function selectPlayerByObject(player) { media.selectPlayerByObject(player) }
@@ -356,6 +289,7 @@ Item {
     onPageChanged: {
         controlCursor = -1;
         keysQuery = "";
+        minimizer.disarmClose();
         suite.resetTransient();
         if (page === NexusModel.PAGE_KEYS && opened)
             controls.refreshBinds();
@@ -450,6 +384,24 @@ Item {
 
     NexusMinimizerState {
         id: minimizer
+
+        nexus: root
+    }
+
+    NexusAlertsState {
+        id: alerts
+
+        nexus: root
+    }
+
+    NexusPaletteState {
+        id: palette
+
+        nexus: root
+    }
+
+    NexusNavState {
+        id: nav
 
         nexus: root
     }

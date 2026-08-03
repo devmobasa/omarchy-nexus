@@ -84,17 +84,37 @@ PanelWindow {
             anchors.leftMargin: card.contentLeftInset
             focus: true
             Keys.onPressed: function(event) {
+                // Palette mode owns the keyboard while open; everything else
+                // falls through to the page shortcuts below.
+                if (nexus.paletteOpen) {
+                    if (event.key === Qt.Key_Escape) {
+                        nexus.closePalette();
+                    } else if (event.key === Qt.Key_Backspace) {
+                        if (nexus.paletteQuery === "")
+                            nexus.closePalette();
+                        else
+                            nexus.paletteQuery = nexus.paletteQuery.slice(0, -1);
+                    } else if (event.key === Qt.Key_Down) {
+                        nexus.paletteCursor = Math.min(nexus.paletteCursor + 1, Math.max(0, nexus.paletteResults.length - 1));
+                    } else if (event.key === Qt.Key_Up) {
+                        nexus.paletteCursor = Math.max(0, nexus.paletteCursor - 1);
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        nexus.runPaletteEntry(nexus.paletteResults[nexus.paletteCursor]);
+                    } else if (event.text.length === 1 && event.text >= " " && event.key !== Qt.Key_Tab) {
+                        nexus.paletteQuery += event.text;
+                        nexus.paletteCursor = 0;
+                    }
+                    event.accepted = true;
+                    return ;
+                }
                 if (event.key === Qt.Key_Escape) {
-                    if (nexus.page === NexusModel.PAGE_KEYS && nexus.keysQuery !== "")
-                        nexus.keysQuery = "";
-                    else
-                        nexus.requestClose();
+                    nexus.requestClose();
                     event.accepted = true;
-                } else if (nexus.page === NexusModel.PAGE_KEYS && event.key === Qt.Key_Backspace) {
-                    nexus.keysQuery = nexus.keysQuery.slice(0, -1);
+                } else if (event.text === "/" && nexus.page !== NexusModel.PAGE_NOTES) {
+                    nexus.openPalette("");
                     event.accepted = true;
-                } else if (nexus.page === NexusModel.PAGE_KEYS && event.text.length === 1 && event.text >= " " && event.key !== Qt.Key_Tab) {
-                    nexus.keysQuery += event.text;
+                } else if (event.text.length === 1 && event.text > " " && event.key !== Qt.Key_Tab && nexus.page !== NexusModel.PAGE_NOTES) {
+                    nexus.openPalette(event.text);
                     event.accepted = true;
                 } else if (event.key === Qt.Key_Down && nexus.lastCursorIndex >= 0) {
                     nexus.controlCursor = Math.min(nexus.controlCursor + 1, nexus.lastCursorIndex);
@@ -166,7 +186,12 @@ PanelWindow {
                         nexus: panel.nexus
                     }
 
+                    NexusPalette {
+                        nexus: panel.nexus
+                    }
+
                     Column {
+                        visible: !nexus.paletteOpen
                         width: parent.width
                         spacing: Style.spacing.md
                         opacity: 1 - Math.abs(nexus.pageShift) * 0.5

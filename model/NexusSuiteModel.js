@@ -108,7 +108,10 @@ function parseNotifications(text, cap) {
         body: typeof row.body === "string" ? row.body.replace(/\s+/g, " ").trim() : "",
         urgency: Number(row.urgency) || 0,
         timestamp: timestamp,
-        pending: sources[s].pending
+        pending: sources[s].pending,
+        // The daemon's stable per-notification id: the key into the
+        // service's liveRefs map and removeByOriginalId().
+        originalId: isFinite(Number(row.originalId)) ? Number(row.originalId) : 0
       })
     }
   }
@@ -116,6 +119,17 @@ function parseNotifications(text, cap) {
   var limit = Number(cap)
   if (!isFinite(limit) || limit < 1) limit = 50
   return rows.slice(0, limit)
+}
+
+// Unseen count for the bar badge: just the pending list length, no row
+// validation — the badge never renders row content.
+function pendingCount(text) {
+  var parsed = null
+  if (typeof text === "string" && text.length > 0) {
+    try { parsed = JSON.parse(text) } catch (error) { parsed = null }
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.pending)) return 0
+  return parsed.pending.length
 }
 
 function relativeTime(timestampMs, nowMs) {
@@ -136,6 +150,12 @@ function clipboardPath(xdgStateHome, home) {
   return base + "/omarchy/clipboard-history.json"
 }
 
+function clipPreview(text) {
+  var preview = String(text == null ? "" : text).replace(/\s+/g, " ").trim()
+  if (preview.length > 120) preview = preview.slice(0, 117) + "…"
+  return preview
+}
+
 // Newest-first rows: text entries carry a one-line preview and the full
 // text for copying; image entries carry their label only (the full manager
 // owns image re-copying).
@@ -152,9 +172,7 @@ function parseClipboard(text, cap) {
     var entry = parsed[i]
     if (!entry || typeof entry !== "object") continue
     if (entry.type === "text" && typeof entry.text === "string" && entry.text.trim().length > 0) {
-      var preview = entry.text.replace(/\s+/g, " ").trim()
-      if (preview.length > 120) preview = preview.slice(0, 117) + "…"
-      rows.push({ kind: "text", preview: preview, text: entry.text })
+      rows.push({ kind: "text", preview: clipPreview(entry.text), text: entry.text })
     } else if (entry.type === "image") {
       rows.push({
         kind: "image",
@@ -164,6 +182,66 @@ function parseClipboard(text, cap) {
     }
   }
   return rows
+}
+
+// ---- clipboard pins (Nexus's own state file) --------------------------------
+// A JSON array of pinned snippet strings, newest first. Pins are Nexus
+// data, not settings, so they live in their own state file.
+
+var PIN_CAP = 20
+
+function pinsPath(xdgStateHome, home) {
+  var base = typeof xdgStateHome === "string" && xdgStateHome.trim().length > 0
+    ? xdgStateHome.trim()
+    : String(home == null ? "" : home) + "/.local/state"
+  return base + "/omarchy/nexus-clipboard-pins.json"
+}
+
+function parsePins(text) {
+  var parsed = null
+  if (typeof text === "string" && text.length > 0) {
+    try { parsed = JSON.parse(text) } catch (error) { parsed = null }
+  }
+  if (!Array.isArray(parsed)) return []
+  var rows = []
+  for (var i = 0; i < parsed.length && rows.length < PIN_CAP; i++) {
+    if (typeof parsed[i] !== "string" || parsed[i].trim().length === 0) continue
+    rows.push({ kind: "text", preview: clipPreview(parsed[i]), text: parsed[i], pinned: true })
+  }
+  return rows
+}
+
+function serializePins(texts) {
+  var list = texts && typeof texts.length === "number" ? texts : []
+  var out = []
+  for (var i = 0; i < list.length && out.length < PIN_CAP; i++) {
+    if (typeof list[i] === "string" && list[i].trim().length > 0) out.push(list[i])
+  }
+  return JSON.stringify(out, null, 2) + "\n"
+}
+
+// Toggle semantics: pinning prepends (newest pin first), unpinning removes
+// every occurrence. The caller persists the returned list.
+function togglePin(texts, text) {
+  var value = String(text == null ? "" : text)
+  if (value.trim().length === 0) return texts && typeof texts.length === "number" ? texts.slice() : []
+  var list = texts && typeof texts.length === "number" ? texts : []
+  var out = []
+  var removed = false
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] === value) { removed = true; continue }
+    out.push(list[i])
+  }
+  if (!removed) out.unshift(value)
+  return out.slice(0, PIN_CAP)
+}
+
+function isPinned(pinRows, text) {
+  var list = pinRows && typeof pinRows.length === "number" ? pinRows : []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].text === text) return true
+  }
+  return false
 }
 
 function copyCommand(text) {
@@ -212,9 +290,17 @@ if (typeof module !== "undefined") {
     screenTimeLine: screenTimeLine,
     notificationsPath: notificationsPath,
     parseNotifications: parseNotifications,
+    pendingCount: pendingCount,
     relativeTime: relativeTime,
     clipboardPath: clipboardPath,
     parseClipboard: parseClipboard,
+    clipPreview: clipPreview,
+    PIN_CAP: PIN_CAP,
+    pinsPath: pinsPath,
+    parsePins: parsePins,
+    serializePins: serializePins,
+    togglePin: togglePin,
+    isPinned: isPinned,
     copyCommand: copyCommand,
     notesPath: notesPath,
     GAME_MODE_PRESETS: GAME_MODE_PRESETS,

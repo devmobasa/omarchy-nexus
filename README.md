@@ -12,10 +12,11 @@ keystroke away, fully dormant when closed.
 - **Overview** — media with a draggable seek bar (elapsed/total labels,
   capability-gated) and a player-switcher chip when several players are
   active; capability-gated transport; CPU, memory, storage, and battery arc
-  meters — battery with time-to-empty/full when UPower knows it; live
-  network throughput as a dual down/up sparkline (loopback, container
-  bridges, tunnels, and other common virtual interfaces are excluded so
-  their mirrored traffic does not double-count).
+  meters — battery with time-to-empty/full when UPower knows it, CPU and
+  memory with a two-minute trend sparkline under the arc; live network
+  throughput as a dual down/up sparkline (loopback, container bridges,
+  tunnels, and other common virtual interfaces are excluded so their
+  mirrored traffic does not double-count).
 - **Controls** — output volume slider, output/input mute, Do Not Disturb,
   night light, stay awake, Bluetooth, and Game Mode (strip compositor
   effects via Omarchy's toggle mechanism — shared state with the
@@ -23,22 +24,35 @@ keystroke away, fully dormant when closed.
   widget), plus Capture and Power quick actions that hand off to the
   Omarchy menu (its own second click confirms destructive power actions).
 - **Style** — theme and background pickers, delegated to the built-in
-  Omarchy selectors.
+  Omarchy selectors; a Wallpaper Hub button appears when the
+  community.wallpaper-hub plugin is installed and enabled.
 - **Keys** (parked) — a searchable cheatsheet of every live Hyprland keybind
   (from `hyprctl binds`, so it never goes stale). Currently unlisted from the
   tab row; re-add `PAGE_KEYS` to `PAGES` in `model/NexusModel.js` to restore.
 - **Media page** — every active player with its own transport, selection,
   and per-player Left/Right track skipping.
 - **Notes** — one quick markdown scratch file with debounced autosave.
+- **Command palette** — start typing anywhere in the panel (or press `/`)
+  to fuzzy-search every action it knows: toggle any control, jump to a
+  page, play/pause a player, restore a minimized window, flip a setting,
+  copy a pinned snippet, or look up a keybind (Enter copies it). Esc backs
+  out to the page you were on.
 - **Clipboard** — recent text clips, click to copy back; image clips hand
-  off to the full first-party manager.
+  off to the full first-party manager. Pin (`󰐃`) the snippets you paste
+  weekly: pins keep a starred section above the history, survive reboots in
+  Nexus's own state file, and are searchable from the palette.
 - **Minimizer** — windows stashed on `special:minimized` (pairs with a
   Super+M minimize-to-tray script setup), newest first with their origin
   workspace, a hover/cursor preview (the scripts' pre-captured thumbnail,
   falling back to a live toplevel capture), and click/Enter to restore to
-  the current workspace. The scripts' sidecar files are read-only to Nexus.
-- **Alerts** — pending and recent notification history with one-click
-  clearing through the first-party service.
+  the current workspace. A per-row close asks for a confirming second
+  click, then sends the compositor's graceful close (never a kill). The
+  scripts' sidecar files are read-only to Nexus.
+- **Alerts** — failed systemd units (both scopes) with one-click restart
+  and reset-failed (system-scope actions authenticate through the polkit
+  agent), plus pending and recent notification history: mark-all-seen,
+  per-row dismiss, one-click clearing, and an "open" action on rows whose
+  sender still accepts one.
 - **Sensors** — CPU/GPU/NVMe temperatures and fan RPMs on Overview,
   discovered per machine (hybrid-GPU aware: an NVIDIA display GPU is read
   via `nvidia-smi`, AMD via sysfs; fans hide when a machine has none).
@@ -49,8 +63,9 @@ keystroke away, fully dormant when closed.
   and pick exactly which effects Game Mode strips (animations, blur,
   shadows, gaps, rounding, tearing). Changes persist immediately to
   `~/.local/state/omarchy/settings/nexus.json`.
-- **Bar shortcut** — an optional bar widget that toggles the panel and
-  lights up while it is open.
+- **Bar shortcut** — an optional bar widget that toggles the panel, lights
+  up while it is open, and carries a badge counting unseen notifications
+  (one watched state file, no polling).
 - **Deterministic media** — one MPRIS adapter with proxy-aware player
   selection (playerctld and browser-integration proxies never shadow the
   real player) and stable ordering, so the shown player never flaps.

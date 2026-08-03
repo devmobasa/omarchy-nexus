@@ -89,7 +89,7 @@ Column {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Style.space(10)
-                width: parent.width - rowOrigin.implicitWidth - Style.space(28)
+                width: parent.width - rowOrigin.implicitWidth - closeAction.width - Style.space(36)
                 text: minimizedRow.modelData.title
                 color: Color.menu.text
                 font.family: Style.font.family
@@ -100,13 +100,35 @@ Column {
             Text {
                 id: rowOrigin
 
-                anchors.right: parent.right
+                anchors.right: closeAction.left
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.rightMargin: Style.space(10)
+                anchors.rightMargin: Style.space(8)
                 text: minimizedRow.modelData.origin
                 color: Qt.darker(Color.menu.text, 1.4)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
+            }
+
+            Text {
+                id: closeAction
+
+                readonly property bool armed: nexus.armedCloseAddress === minimizedRow.modelData.address
+
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: Style.space(10)
+                text: armed ? "sure?" : "󰅖"
+                color: armed ? Color.urgent : Qt.darker(Color.menu.text, 1.5)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: armed
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    onClicked: nexus.closeMinimized(minimizedRow.modelData)
+                }
+
             }
 
         }

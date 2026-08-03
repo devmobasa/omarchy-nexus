@@ -14,6 +14,7 @@ Item {
     id: state
 
     required property var nexus
+    property string armedCloseAddress: ""
     readonly property bool opened: nexus.opened
     readonly property string minimizerDir: NexusMinimizerModel.runtimeDir(Quickshell.env("XDG_RUNTIME_DIR"))
     property string sidecarText: ""
@@ -56,10 +57,43 @@ Item {
         Hyprland.refreshWorkspaces();
     }
 
+    function closeRow(row) {
+        if (!row)
+            return ;
+
+        const close = NexusMinimizerModel.closeDispatch(row.address);
+        if (close === "")
+            return ;
+
+        Hyprland.dispatch(close);
+        Hyprland.refreshToplevels();
+    }
+
+    // Destructive row actions arm on the first activation and run on the
+    // second (the Omarchy menu's confirm idiom); the arm decays on its own.
+    function closeMinimized(row) {
+        if (!row)
+            return ;
+
+        if (armedCloseAddress !== row.address) {
+            armedCloseAddress = row.address;
+            armedCloseTimer.restart();
+            return ;
+        }
+        disarmClose();
+        closeRow(row);
+    }
+
+    function disarmClose() {
+        armedCloseAddress = "";
+        armedCloseTimer.stop();
+    }
+
     function resetSession() {
         minimizedWindows = [];
         sidecarText = "";
         historyText = "";
+        disarmClose();
     }
 
     onOpenedChanged: {
@@ -116,6 +150,13 @@ Item {
         onLoaded: state.historyText = text()
         onLoadFailed: state.historyText = ""
         onFileChanged: reload()
+    }
+
+    Timer {
+        id: armedCloseTimer
+
+        interval: 3000
+        onTriggered: state.armedCloseAddress = ""
     }
 
 }

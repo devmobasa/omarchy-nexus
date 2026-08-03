@@ -24,6 +24,7 @@ Grid {
         percent: !nexus.statStale && nexus.cpuValue !== null ? nexus.cpuValue : null
         stale: nexus.statStaleShown
         detail: nexus.statStaleShown ? "Stale" : "Usage"
+        history: nexus.cpuHistory
     }
 
     NexusArcMeter {
@@ -34,6 +35,7 @@ Grid {
         percent: !nexus.statStale && nexus.memValue !== null ? nexus.memValue : null
         stale: nexus.statStaleShown
         detail: nexus.statStaleShown ? "Stale" : "In use"
+        history: nexus.memHistory
     }
 
     NexusArcMeter {

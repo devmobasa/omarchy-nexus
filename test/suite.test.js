@@ -85,4 +85,43 @@ assert.deepEqual(model.parseClipboard('junk', 5), [])
 assert.deepEqual(model.copyCommand('some -- text'), ['wl-copy', '--', 'some -- text'],
   'the copy is one argv element behind an argument terminator')
 
+// ---- clipboard pins ---------------------------------------------------------
+
+assert.ok(model.pinsPath('/tmp/state', '/home/u').endsWith('/omarchy/nexus-clipboard-pins.json'))
+const pinRows = model.parsePins(JSON.stringify(['alpha', '', 42, '  beta text  ']))
+assert.equal(pinRows.length, 2, 'blank and non-string pins are dropped')
+assert.equal(pinRows[0].kind, 'text')
+assert.equal(pinRows[0].pinned, true)
+assert.equal(pinRows[1].preview, 'beta text')
+assert.equal(pinRows[1].text, '  beta text  ', 'pin rows keep the exact text for copying')
+assert.deepEqual(model.parsePins('junk'), [])
+assert.deepEqual(model.parsePins('{"a":1}'), [])
+
+const pinned = model.togglePin([], 'first')
+assert.deepEqual(pinned, ['first'])
+assert.deepEqual(model.togglePin(pinned, 'second'), ['second', 'first'], 'new pins prepend')
+assert.deepEqual(model.togglePin(['a', 'b'], 'a'), ['b'], 'toggling an existing pin removes it')
+assert.deepEqual(model.togglePin(['a'], '   '), ['a'], 'blank text never pins')
+const overCap = []
+for (let i = 0; i < model.PIN_CAP + 5; i++) overCap.push('pin' + i)
+assert.equal(model.togglePin(overCap, 'fresh').length, model.PIN_CAP, 'the cap holds')
+assert.ok(model.isPinned(pinRows, '  beta text  '))
+assert.ok(!model.isPinned(pinRows, 'beta text'), 'pin identity is the exact text')
+
+const roundTrip = model.parsePins(model.serializePins(['one', 'two']))
+assert.deepEqual(roundTrip.map(r => r.text), ['one', 'two'], 'serialize/parse round-trips')
+
+// ---- pending count and action identity --------------------------------------
+
+assert.equal(model.pendingCount(JSON.stringify({ pending: [1, 2, 3], past: [] })), 3)
+assert.equal(model.pendingCount(JSON.stringify({ past: [] })), 0)
+assert.equal(model.pendingCount('junk'), 0)
+
+const withIds = model.parseNotifications(JSON.stringify({
+  pending: [{ app: 'x', summary: 's', timestamp: 5, originalId: 42 }],
+  past: [{ app: 'y', summary: 't', timestamp: 4 }]
+}), 10)
+assert.equal(withIds[0].originalId, 42, 'the daemon id survives for liveRefs/removeByOriginalId')
+assert.equal(withIds[1].originalId, 0, 'a missing id degrades to 0, never undefined')
+
 console.log('ok - nexus suite integrations model')

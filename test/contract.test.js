@@ -81,8 +81,8 @@ assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or close
 // cadence). The sixth, pendingClearTimer, is a one-shot 400 ms clear
 // started only from dispatchControl, which no-ops while closed. Pinning the
 // total means any new timer fails this test until reviewed for dormancy.
-assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 7,
-  'the timer inventory is pinned: a new timer must be reviewed for dormancy (the seventh is the notes autosave debounce, gated on notesDirty)')
+assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 8,
+  'the timer inventory is pinned: a new timer must be reviewed for dormancy (the seventh is the notes autosave debounce, gated on notesDirty; the eighth is the one-shot 3 s armed-close decay, started only by clicking a close action)')
 assert.equal((nexus.match(/running: root\.opened/g) || []).length, 6,
   'five recurring timers plus the cava process are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
@@ -92,8 +92,8 @@ assert.doesNotMatch(nexus, /execDetached|bash -c|sh -c/, 'no shell command strin
 // two proc samplers, three user-action game-mode/settings steps, the keys
 // fetch, sensor discovery + sampling + nvidia-smi, and cava. hyprctl
 // appears in exactly two commands (reload, binds).
-assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 11,
-  'the process inventory is pinned: a new process must be reviewed (the eleventh is the user-action wl-copy)')
+assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 14,
+  'the process inventory is pinned: a new process must be reviewed (the eleventh is the user-action wl-copy; twelve and thirteen list failed units only on entering the Alerts page; fourteen is the user-action systemctl restart/reset-failed)')
 assert.match(nexus, /NexusSuiteModel\.copyCommand/, 'clipboard copies build through the model')
 assert.match(nexus, /NexusSuiteModel\.parseClipboard/, 'clipboard history parses through the model')
 assert.match(nexus, /summonSibling\("omarchy\.clipboard"\)/, 'image clips defer to the full manager')
@@ -110,12 +110,20 @@ assert.equal((nexus.match(/command: \[[^\]]*hyprctl[^\]]*\]/g) || []).length, 2,
 assert.equal((nexus.match(/could not be started/g) || []).length, 4,
   'every failure-surfacing process has a start-failure guard')
 
-// Keybind cheatsheet: text output parsed and filtered through the model;
-// Escape clears the filter before it closes the panel.
+// Keybind cheatsheet: text output parsed and filtered through the model.
 assert.match(nexus, /NexusKeybindsModel\.parseBindsText/)
 assert.match(nexus, /NexusKeybindsModel\.filterBinds/)
-assert.match(nexus, /root\.page === NexusModel\.PAGE_KEYS && root\.keysQuery !== ""/,
-  'Escape clears the keys filter first')
+
+// Command palette: typing anywhere (or "/") opens it, the palette owns the
+// keyboard while open (Escape closes it before the panel), results rank
+// through the tested model, and every activation goes through the
+// entry-kind switch — no palette entry embeds a raw command.
+assert.match(nexus, /if \(root\.paletteOpen\)/, 'palette mode owns the keyboard first')
+assert.match(nexus, /root\.openPalette\(event\.text\)/, 'typing anywhere seeds the palette')
+assert.match(nexus, /NexusPaletteModel\.filterEntries/, 'results rank through the tested model')
+assert.match(nexus, /NexusPaletteModel\.KINDS\.SIBLING/, 'cross-plugin entries summon through the host')
+assert.match(nexus, /root\.wallpaperHubAvailable/, 'the hub entry is gated on installed+enabled')
+assert.match(nexus, /registryRevision/, 'plugin availability reads the registry reactively')
 
 // Sensors: discovery once per open, self-labeling grep sampling, nvidia-smi
 // only for an NVIDIA display GPU, absence degrades to a hidden row. The
@@ -334,8 +342,8 @@ assert.match(nexus, /NexusSuiteModel\.GAME_MODE_PRESETS/)
 assert.match(nexusEntry, /NexusSettingsRows\.rows\(\)/,
   'settings row metadata stays outside the lifecycle facade')
 assert.match(nexus, /NexusModel\.pageIcon/, 'narrow pages render icon-only tabs')
-assert.equal((nexus.match(/hasCursor: root\.controlCursor === NexusModel\.STYLE_ROWS\.[A-Z_]+ && root\.page === NexusModel\.PAGE_STYLE/g) || []).length, 2,
-  'both style rows are cursor rows')
+assert.equal((nexus.match(/hasCursor: root\.controlCursor === NexusModel\.STYLE_ROWS\.[A-Z_]+ && root\.page === NexusModel\.PAGE_STYLE/g) || []).length, 3,
+  'all three style rows are cursor rows (Wallpaper Hub renders only when that plugin is enabled)')
 assert.match(nexus, /if \(event\.angleDelta\.y === 0\)\s+return/,
   'horizontal wheel deltas never cycle pages')
 assert.match(nexus, /if \(!consumed\)\s*\n\s*root\.setPage/,

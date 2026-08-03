@@ -63,4 +63,9 @@ assert.equal(model.restoreDispatch('zz', 2), '')
 assert.equal(model.restoreDispatch('0xaaa', -98), '', 'never restore into a special workspace')
 assert.equal(model.focusDispatch("0xa'); evil("), '')
 
+// Close is the graceful request, never kill, and only for valid addresses.
+assert.equal(model.closeDispatch('0xaaa'), 'hl.dsp.window.close({ window = "address:0xaaa" })')
+assert.equal(model.closeDispatch('zz'), '')
+assert.equal(model.closeDispatch("0xa'); evil("), '')
+
 console.log('ok - nexus minimizer model')

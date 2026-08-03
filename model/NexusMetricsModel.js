@@ -13,6 +13,10 @@ var CPU_MEM_INTERVAL_MS = 2000
 var DISK_INTERVAL_MS = 30000
 var STALE_FACTOR = 3
 var NET_HISTORY_CAP = 30
+// CPU/mem trend windows: 60 samples at the 2 s cadence = the last 2 minutes.
+// Percent scale is fixed (0-100), so no shared-max scaling is involved.
+var STAT_HISTORY_CAP = 60
+var PERCENT_SCALE_MAX = 100
 
 // Sparkline scale floor: idle background chatter (ARP, mDNS, RA, NTP) runs a
 // few hundred B/s. Without a floor the window max always maps to the top
@@ -290,6 +294,8 @@ if (typeof module !== "undefined") {
     STALE_FACTOR: STALE_FACTOR,
     NET_HISTORY_CAP: NET_HISTORY_CAP,
     NET_SCALE_FLOOR: NET_SCALE_FLOOR,
+    STAT_HISTORY_CAP: STAT_HISTORY_CAP,
+    PERCENT_SCALE_MAX: PERCENT_SCALE_MAX,
     BATTERY_STATE: BATTERY_STATE,
     VIRTUAL_INTERFACE_PREFIXES: VIRTUAL_INTERFACE_PREFIXES,
     isVirtualInterface: isVirtualInterface,
