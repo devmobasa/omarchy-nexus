@@ -90,6 +90,7 @@ Item {
     readonly property string barEditError: barEditor.editError
     readonly property var clipboardRows: suite.clipboardRows
     readonly property var pinnedClipboardRows: suite.pinnedRows
+    readonly property string armedClipKey: suite.armedClipKey
     // Keyboard cursor and activation walk pins-then-history as one list.
     readonly property var clipboardAllRows: suite.pinnedRows.concat(suite.clipboardRows)
     readonly property var minimizerRows: minimizer.minimizerRows
@@ -296,6 +297,8 @@ Item {
     function addBarWidget(id) { barEditor.addWidget(id) }
     function copyClipboardRow(row) { suite.copyClipboardRow(row) }
     function togglePinClipboard(row) { suite.togglePinRow(row) }
+    function deleteClipboardRow(row) { suite.deleteClipRow(row) }
+    function deleteClipboardKey(key) { suite.deleteClipRow({ "key": String(key) }) }
     function copyText(text, preview) { suite.copyText(text, preview) }
     function restoreMinimized(row) { minimizer.restoreRow(row) }
     function closeMinimized(row) { minimizer.closeMinimized(row) }

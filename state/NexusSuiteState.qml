@@ -49,6 +49,7 @@ Item {
     property string pinsText: ""
     readonly property var pinnedRows: NexusSuiteModel.parsePins(pinsText)
     property string copiedPreview: ""
+    property string armedClipKey: ""
     // Quick notes: one markdown file, debounce-autosaved.
     readonly property string notesFile: NexusSuiteModel.notesPath(Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME"))
     property bool notesLoaded: false
@@ -126,6 +127,28 @@ Item {
         pinsWriter.setText(serialized);
     }
 
+    // History deletes arm on the first click and run on the second (the
+    // suite's confirm idiom). The write preserves the first-party
+    // manager's exact serialization; its file watcher adopts the change.
+    function deleteClipRow(row) {
+        if (!row || typeof row.key !== "string" || row.key === "")
+            return ;
+
+        if (armedClipKey !== row.key) {
+            armedClipKey = row.key;
+            clipArmTimer.restart();
+            return ;
+        }
+        armedClipKey = "";
+        clipArmTimer.stop();
+        var serialized = NexusSuiteModel.removeClipEntry(clipboardText, row.key);
+        if (serialized === null)
+            return ;
+
+        clipboardText = serialized;
+        clipWriter.setText(serialized);
+    }
+
     function saveNotes() {
         if (!notesDirty)
             return ;
@@ -143,6 +166,8 @@ Item {
 
     function resetTransient() {
         copiedPreview = "";
+        armedClipKey = "";
+        clipArmTimer.stop();
     }
 
     FileView {
@@ -226,6 +251,22 @@ Item {
         printErrors: false
         atomicWrites: true
         onSaved: reload()
+    }
+
+    FileView {
+        id: clipWriter
+
+        path: state.clipboardFile
+        printErrors: false
+        atomicWrites: true
+        onSaved: reload()
+    }
+
+    Timer {
+        id: clipArmTimer
+
+        interval: 3000
+        onTriggered: state.armedClipKey = ""
     }
 
     Process {

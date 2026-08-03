@@ -172,16 +172,45 @@ function parseClipboard(text, cap) {
     var entry = parsed[i]
     if (!entry || typeof entry !== "object") continue
     if (entry.type === "text" && typeof entry.text === "string" && entry.text.trim().length > 0) {
-      rows.push({ kind: "text", preview: clipPreview(entry.text), text: entry.text })
+      rows.push({ kind: "text", preview: clipPreview(entry.text), text: entry.text,
+        key: clipEntryKey(entry) })
     } else if (entry.type === "image") {
       rows.push({
         kind: "image",
         preview: "[image] " + (typeof entry.capturedAt === "string" ? entry.capturedAt : ""),
-        text: ""
+        text: "",
+        key: clipEntryKey(entry)
       })
     }
   }
   return rows
+}
+
+// The first-party manager's own identity scheme, so a row maps back to
+// its file entry exactly.
+function clipEntryKey(entry) {
+  if (!entry || typeof entry !== "object") return ""
+  if (entry.type === "image") return "image:" + String(entry.path || "")
+  return "text:" + String(entry.text || "")
+}
+
+// Remove one entry from the raw history file text by key, preserving the
+// manager's exact serialization (2-space indent, trailing newline) so the
+// overlay's file watcher adopts the write as its own. Returns null when
+// nothing matches — the caller must not write.
+function removeClipEntry(rawText, key) {
+  var parsed = null
+  if (typeof rawText === "string" && rawText.length > 0) {
+    try { parsed = JSON.parse(rawText) } catch (error) { parsed = null }
+  }
+  if (!Array.isArray(parsed) || typeof key !== "string" || key.length === 0) return null
+  for (var i = 0; i < parsed.length; i++) {
+    if (clipEntryKey(parsed[i]) === key) {
+      parsed.splice(i, 1)
+      return JSON.stringify(parsed, null, 2) + "\n"
+    }
+  }
+  return null
 }
 
 // ---- clipboard pins (Nexus's own state file) --------------------------------
@@ -295,6 +324,8 @@ if (typeof module !== "undefined") {
     clipboardPath: clipboardPath,
     parseClipboard: parseClipboard,
     clipPreview: clipPreview,
+    clipEntryKey: clipEntryKey,
+    removeClipEntry: removeClipEntry,
     PIN_CAP: PIN_CAP,
     pinsPath: pinsPath,
     parsePins: parsePins,

@@ -86,8 +86,15 @@ assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or close
 // (gated on the Network card being visible); brightness poll (gated on
 // the Controls page) and its one-shot 180 ms drag debounce. Pinning the
 // total means any new timer fails this test until reviewed for dormancy.
-assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 12,
-  'the timer inventory is pinned: a new timer must be reviewed for dormancy')
+assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 13,
+  'the timer inventory is pinned: a new timer must be reviewed for dormancy (the thirteenth is the one-shot 3 s clip-delete arm decay, click-started)')
+
+// Clipboard history deletes: confirm-armed, built through the model so
+// the first-party manager's serialization and identity scheme are exact,
+// and never written when nothing matched.
+assert.match(nexus, /NexusSuiteModel\.removeClipEntry/, 'clip deletes build through the model')
+assert.match(nexus, /armedClipKey/, 'clip deletes take a confirming second click')
+assert.match(nexus, /if \(serialized === null\)/, 'a no-match delete never writes')
 assert.equal((nexus.match(/running: root\.opened/g) || []).length, 5,
   'the five always-recurring timers are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')

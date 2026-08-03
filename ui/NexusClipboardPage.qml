@@ -20,7 +20,7 @@ Column {
             id: clipboardTitle
 
             anchors.left: parent.left
-            text: nexus.copiedPreview !== "" ? "Copied: " + nexus.copiedPreview : nexus.clipboardAllRows.length + " clips — click to copy, 󰐃 to pin"
+            text: nexus.copiedPreview !== "" ? "Copied: " + nexus.copiedPreview : nexus.clipboardAllRows.length + " clips — click to copy, 󰐃 pin, 󰅖 delete"
             color: nexus.copiedPreview !== "" ? Color.accent : Color.menu.text
             width: parent.width - clipboardManagerButton.width - Style.space(8)
             font.family: Style.font.family
@@ -87,7 +87,7 @@ Column {
                 id: clipText
 
                 anchors.left: parent.left
-                anchors.right: pinAction.visible ? pinAction.left : parent.right
+                anchors.right: deleteAction.visible ? deleteAction.left : (pinAction.visible ? pinAction.left : parent.right)
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Style.space(10)
                 anchors.rightMargin: Style.space(8)
@@ -96,6 +96,30 @@ Column {
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
+            }
+
+            Text {
+                id: deleteAction
+
+                // History rows only; a pinned row's own delete is unpin.
+                readonly property bool armed: !clipRow.pinned && clipRow.modelData.key !== undefined && nexus.armedClipKey === clipRow.modelData.key
+
+                visible: !clipRow.pinned && clipRow.modelData.key !== undefined
+                anchors.right: pinAction.visible ? pinAction.left : parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: Style.space(8)
+                text: armed ? "sure?" : "󰅖"
+                color: armed ? Color.urgent : Qt.darker(Color.menu.text, 1.6)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: armed
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    onClicked: nexus.deleteClipboardRow(clipRow.modelData)
+                }
+
             }
 
             Text {

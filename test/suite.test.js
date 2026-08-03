@@ -111,6 +111,29 @@ assert.ok(!model.isPinned(pinRows, 'beta text'), 'pin identity is the exact text
 const roundTrip = model.parsePins(model.serializePins(['one', 'two']))
 assert.deepEqual(roundTrip.map(r => r.text), ['one', 'two'], 'serialize/parse round-trips')
 
+// ---- clipboard history deletion ---------------------------------------------
+
+const historyRaw = JSON.stringify([
+  { type: 'text', text: 'keep me' },
+  { type: 'image', path: '/p/shot.png', mime: 'image/png', capturedAt: 'Monday 12:00' },
+  { type: 'text', text: 'delete me' }
+], null, 2) + '\n'
+assert.equal(model.clipEntryKey({ type: 'text', text: 'x' }), 'text:x')
+assert.equal(model.clipEntryKey({ type: 'image', path: '/p.png' }), 'image:/p.png')
+const afterText = model.removeClipEntry(historyRaw, 'text:delete me')
+assert.ok(afterText.endsWith('\n'), 'the manager serialization survives')
+assert.deepEqual(JSON.parse(afterText).map(model.clipEntryKey),
+  ['text:keep me', 'image:/p/shot.png'])
+const afterImage = model.removeClipEntry(historyRaw, 'image:/p/shot.png')
+assert.equal(JSON.parse(afterImage).length, 2, 'image rows delete by path identity')
+assert.equal(model.removeClipEntry(historyRaw, 'text:absent'), null, 'no match, no write')
+assert.equal(model.removeClipEntry('junk', 'text:x'), null)
+assert.equal(model.removeClipEntry(historyRaw, ''), null)
+
+const keyedRows = model.parseClipboard(historyRaw, 10)
+assert.equal(keyedRows[0].key, 'text:keep me')
+assert.equal(keyedRows[1].key, 'image:/p/shot.png', 'image rows carry a deletable identity')
+
 // ---- pending count and action identity --------------------------------------
 
 assert.equal(model.pendingCount(JSON.stringify({ pending: [1, 2, 3], past: [] })), 3)
