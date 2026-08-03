@@ -17,8 +17,10 @@ var PAGE_SETTINGS = "settings"
 // "settings" is a full page (payloads and Tab cycling reach it) but renders
 // in the tab row as the trailing cog rather than a labelled tab. Pages with
 // an icon render icon-only in the tab row to keep it inside the card width.
+// PAGE_KEYS is parked: its page stays mounted but unlisted, so no tab,
+// cycling stop, or payload can reach it until it is re-added here.
 var PAGES = [PAGE_OVERVIEW, PAGE_MEDIA, PAGE_CONTROLS, PAGE_STYLE,
-  PAGE_KEYS, PAGE_NOTES, PAGE_CLIPBOARD, PAGE_MINIMIZER, PAGE_ALERTS,
+  PAGE_NOTES, PAGE_CLIPBOARD, PAGE_MINIMIZER, PAGE_ALERTS,
   PAGE_SETTINGS]
 var DEFAULT_PAGE = PAGE_OVERVIEW
 

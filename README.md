@@ -24,9 +24,9 @@ keystroke away, fully dormant when closed.
   Omarchy menu (its own second click confirms destructive power actions).
 - **Style** — theme and background pickers, delegated to the built-in
   Omarchy selectors.
-- **Keys** — a searchable cheatsheet of every live Hyprland keybind (from
-  `hyprctl binds`, so it never goes stale): just start typing to filter,
-  Backspace edits, Esc clears.
+- **Keys** (parked) — a searchable cheatsheet of every live Hyprland keybind
+  (from `hyprctl binds`, so it never goes stale). Currently unlisted from the
+  tab row; re-add `PAGE_KEYS` to `PAGES` in `model/NexusModel.js` to restore.
 - **Media page** — every active player with its own transport, selection,
   and per-player Left/Right track skipping.
 - **Notes** — one quick markdown scratch file with debounced autosave.
@@ -78,7 +78,7 @@ omarchy-shell shell toggle community.omarchy-nexus '{}'
 ```
 
 The payload may name a page directly: `'{"page":"controls"}'` (pages:
-`overview`, `media`, `controls`, `style`, `keys`, `notes`, `clipboard`,
+`overview`, `media`, `controls`, `style`, `notes`, `clipboard`,
 `minimizer`, `alerts`, `settings`).
 
 ### Bar shortcut
