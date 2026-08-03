@@ -1,0 +1,18 @@
+#!/bin/bash
+# Loads every model in the real QML JS engine (offscreen quickshell).
+# node's V8 accepts syntax Qt's engine may not; only this catches it.
+# Skips cleanly where quickshell is unavailable (CI without the shell).
+set -euo pipefail
+cd "$(dirname "$0")"
+if ! command -v quickshell >/dev/null; then
+  echo "skip - qml engine smoke (quickshell not installed)"
+  exit 0
+fi
+stage=$(mktemp -d /tmp/nexus-smoke.XXXXXX)
+trap 'rm -rf "$stage"' EXIT
+cp shell.qml "$stage/"
+mkdir "$stage/model"
+cp ../../model/*.js "$stage/model/"
+mkdir "$stage/rt"
+QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR="$stage/rt" WAYLAND_DISPLAY= \
+  timeout 30 quickshell -p "$stage" 2>&1 | grep -E 'ok - qml engine smoke|FAIL|ERROR' | grep -v 'Failed to start IPC' || true

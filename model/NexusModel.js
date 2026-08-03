@@ -12,6 +12,7 @@ var PAGE_NOTES = "notes"
 var PAGE_ALERTS = "alerts"
 var PAGE_CLIPBOARD = "clipboard"
 var PAGE_MINIMIZER = "minimizer"
+var PAGE_BAR = "bar"
 var PAGE_SETTINGS = "settings"
 
 // "settings" is a full page (payloads and Tab cycling reach it) but renders
@@ -21,7 +22,7 @@ var PAGE_SETTINGS = "settings"
 // cycling stop, or payload can reach it until it is re-added here.
 var PAGES = [PAGE_OVERVIEW, PAGE_MEDIA, PAGE_CONTROLS, PAGE_STYLE,
   PAGE_NOTES, PAGE_CLIPBOARD, PAGE_MINIMIZER, PAGE_ALERTS,
-  PAGE_SETTINGS]
+  PAGE_BAR, PAGE_SETTINGS]
 var DEFAULT_PAGE = PAGE_OVERVIEW
 
 // Keyboard cursor rows, one map per page that has fixed rows (the settings
@@ -56,6 +57,7 @@ PAGE_TITLES[PAGE_NOTES] = "Notes"
 PAGE_TITLES[PAGE_ALERTS] = "Alerts"
 PAGE_TITLES[PAGE_CLIPBOARD] = "Clipboard"
 PAGE_TITLES[PAGE_MINIMIZER] = "Minimizer"
+PAGE_TITLES[PAGE_BAR] = "Bar"
 PAGE_TITLES[PAGE_SETTINGS] = "Settings"
 
 // Every page has an icon: the tab row renders icon-only (uniform, fits the
@@ -70,6 +72,7 @@ PAGE_ICONS[PAGE_NOTES] = "󰎞"
 PAGE_ICONS[PAGE_ALERTS] = "󰂚"
 PAGE_ICONS[PAGE_CLIPBOARD] = "󰅍"
 PAGE_ICONS[PAGE_MINIMIZER] = "󰖰"
+PAGE_ICONS[PAGE_BAR] = "󰍜"
 PAGE_ICONS[PAGE_SETTINGS] = "󰒓"
 
 // Pages with real content use the empty string: the panel hides the
@@ -147,6 +150,7 @@ if (typeof module !== "undefined") {
     PAGE_ALERTS: PAGE_ALERTS,
     PAGE_CLIPBOARD: PAGE_CLIPBOARD,
     PAGE_MINIMIZER: PAGE_MINIMIZER,
+    PAGE_BAR: PAGE_BAR,
     PAGE_SETTINGS: PAGE_SETTINGS,
     CONTROLS_ROWS: CONTROLS_ROWS,
     CONTROLS_LAST_ROW: CONTROLS_LAST_ROW,

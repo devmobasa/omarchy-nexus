@@ -100,6 +100,8 @@ PanelWindow {
                         nexus.paletteCursor = Math.max(0, nexus.paletteCursor - 1);
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                         nexus.runPaletteEntry(nexus.paletteResults[nexus.paletteCursor]);
+                    } else if (event.key === Qt.Key_Tab) {
+                        nexus.acceptPaletteGhost();
                     } else if (event.text.length === 1 && event.text >= " " && event.key !== Qt.Key_Tab) {
                         nexus.paletteQuery += event.text;
                         nexus.paletteCursor = 0;
@@ -246,6 +248,10 @@ PanelWindow {
                             nexus: panel.nexus
                         }
 
+                        NexusBrightnessControl {
+                            nexus: panel.nexus
+                        }
+
                         NexusControlsPage {
                             nexus: panel.nexus
                         }
@@ -255,6 +261,10 @@ PanelWindow {
                         }
 
                         NexusStylePage {
+                            nexus: panel.nexus
+                        }
+
+                        NexusBarPage {
                             nexus: panel.nexus
                         }
 

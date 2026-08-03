@@ -15,20 +15,34 @@ Column {
 
     Item {
         width: parent.width
-        height: queryLine.implicitHeight + Style.space(8)
+        height: queryRow.implicitHeight + Style.space(8)
 
-        Text {
-            id: queryLine
+        Row {
+            id: queryRow
 
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - paletteHint.implicitWidth - Style.space(8)
-            text: "󰍉 " + (nexus.paletteQuery === "" ? "Type to search actions…" : nexus.paletteQuery)
-            color: nexus.paletteQuery === "" ? Qt.darker(Color.menu.text, 1.4) : Color.menu.text
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            font.bold: nexus.paletteQuery !== ""
-            elide: Text.ElideLeft
+            spacing: 0
+
+            Text {
+                text: "󰍉 " + (nexus.paletteQuery === "" ? "Type to search actions…" : nexus.paletteQuery)
+                color: nexus.paletteQuery === "" ? Qt.darker(Color.menu.text, 1.4) : Color.menu.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                font.bold: nexus.paletteQuery !== ""
+                elide: Text.ElideLeft
+            }
+
+            Text {
+                // Ghost completion of the top result; Tab accepts it.
+                visible: nexus.paletteGhost !== ""
+                text: nexus.paletteGhost
+                color: Qt.darker(Color.menu.text, 1.8)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+            }
+
         }
 
         Text {
@@ -36,7 +50,7 @@ Column {
 
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: "Esc closes"
+            text: nexus.paletteGhost !== "" ? "Tab completes · Esc closes" : "Esc closes"
             color: Qt.darker(Color.menu.text, 1.6)
             font.family: Style.font.family
             font.pixelSize: Style.font.caption

@@ -32,11 +32,17 @@ Item {
     property bool gameModePending: false
     property string gameModeError: ""
 
+    // Single commit path: normalize both sides through the serializer and
+    // skip the write entirely when nothing changed, so a repeated toggle
+    // (IPC, palette) never spawns mkdir or touches the file.
     function updateSetting(key, value) {
         var next = {
         };
         for (var existing in stateOverrides) next[existing] = stateOverrides[existing]
         next[key] = value === true;
+        if (NexusSettingsModel.buildStateJson(next) === NexusSettingsModel.buildStateJson(stateOverrides))
+            return ;
+
         stateOverrides = next;
         ensureDirsProcess.writeStateAfter = true;
         runProcess(ensureDirsProcess);
@@ -78,14 +84,6 @@ Item {
         gameModePending = false;
         gameModeError = ok ? "" : message;
         syncGameMode();
-    }
-
-    function prepareCava() {
-        if (nexus.cavaConfWritten || !nexus.cavaAvailable || !settings.showVisualizer)
-            return ;
-
-        ensureDirsProcess.writeCavaAfter = true;
-        runProcess(ensureDirsProcess);
     }
 
     function resetTransient() {
@@ -136,7 +134,6 @@ Item {
         property bool exitSeen: false
         property bool writeFlagAfter: false
         property bool writeStateAfter: false
-        property bool writeCavaAfter: false
 
         command: ["mkdir", "-p", state.gameModeDir, state.settingsDir]
         onRunningChanged: {
@@ -149,17 +146,14 @@ Item {
 
                 writeFlagAfter = false;
                 writeStateAfter = false;
-                writeCavaAfter = false;
             }
         }
         onExited: function(exitCode) {
             exitSeen = true;
             var flagWanted = writeFlagAfter;
             var stateWanted = writeStateAfter;
-            var cavaWanted = writeCavaAfter;
             writeFlagAfter = false;
             writeStateAfter = false;
-            writeCavaAfter = false;
             if (exitCode !== 0) {
                 if (flagWanted)
                     state.finishGameMode(false, "could not create the state directories");
@@ -174,9 +168,6 @@ Item {
 
             if (stateWanted)
                 stateWriter.setText(NexusSettingsModel.buildStateJson(state.stateOverrides));
-
-            if (cavaWanted)
-                nexus.cavaController.writeConfig();
 
         }
     }

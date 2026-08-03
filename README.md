@@ -16,12 +16,19 @@ keystroke away, fully dormant when closed.
   memory with a two-minute trend sparkline under the arc; live network
   throughput as a dual down/up sparkline (loopback, container bridges,
   tunnels, and other common virtual interfaces are excluded so their
-  mirrored traffic does not double-count).
-- **Controls** — output volume slider, output/input mute, Do Not Disturb,
-  night light, stay awake, Bluetooth, and Game Mode (strip compositor
-  effects via Omarchy's toggle mechanism — shared state with the
-  [community.game-mode](https://github.com/devmobasa/omarchy-game-mode) bar
-  widget), plus Capture and Power quick actions that hand off to the
+  mirrored traffic does not double-count) with split-path latency: the LAN
+  router leg vs the internet leg, so one look answers "my network or my
+  ISP". Sensor rows color by the hardware's own declared thermal limits
+  (NVMe and DDR5 DIMM sensors declare them; rows without limits stay
+  plain), including a Memory row for the hottest DIMM.
+- **Controls** — output volume slider, brightness slider for the focused
+  monitor (DDC or backlight via Omarchy's own CLI; hidden when the display
+  cannot be controlled), output/input mute with a live microphone peak
+  meter (-55 dBFS floor, native PipeWire monitor — no process), Do Not
+  Disturb, night light, stay awake, Bluetooth, and Game Mode (strip
+  compositor effects via Omarchy's toggle mechanism — shared state with
+  the [community.game-mode](https://github.com/devmobasa/omarchy-game-mode)
+  bar widget), plus Capture and Power quick actions that hand off to the
   Omarchy menu (its own second click confirms destructive power actions).
 - **Style** — theme and background pickers, delegated to the built-in
   Omarchy selectors; a Wallpaper Hub button appears when the
@@ -35,8 +42,10 @@ keystroke away, fully dormant when closed.
 - **Command palette** — start typing anywhere in the panel (or press `/`)
   to fuzzy-search every action it knows: toggle any control, jump to a
   page, play/pause a player, restore a minimized window, flip a setting,
-  copy a pinned snippet, or look up a keybind (Enter copies it). Esc backs
-  out to the page you were on.
+  step brightness, copy a pinned snippet, or look up a keybind (Enter
+  copies it). Title matches always outrank description matches, the top
+  result ghost-completes inline (Tab accepts), and Esc backs out to the
+  page you were on.
 - **Clipboard** — recent text clips, click to copy back; image clips hand
   off to the full first-party manager. Pin (`󰐃`) the snippets you paste
   weekly: pins keep a starred section above the history, survive reboots in
@@ -50,9 +59,15 @@ keystroke away, fully dormant when closed.
   scripts' sidecar files are read-only to Nexus.
 - **Alerts** — failed systemd units (both scopes) with one-click restart
   and reset-failed (system-scope actions authenticate through the polkit
-  agent), plus pending and recent notification history: mark-all-seen,
-  per-row dismiss, one-click clearing, and an "open" action on rows whose
-  sender still accepts one.
+  agent), pending and recent notification history (mark-all-seen, per-row
+  dismiss, one-click clearing, an "open" action on rows whose sender still
+  accepts one), and shell self-diagnostics: QML errors from the running
+  shell's own log since the last config load, secret-bearing lines dropped
+  whole, home paths redacted.
+- **Bar** — edit the bar from the panel: reorder widgets, move them
+  between sections, remove or add them. Every mutation goes through the
+  host's plugin registry, so inline widget settings survive moves and the
+  render-pinned tray is honestly marked instead of pretending to move.
 - **Sensors** — CPU/GPU/NVMe temperatures and fan RPMs on Overview,
   discovered per machine (hybrid-GPU aware: an NVIDIA display GPU is read
   via `nvidia-smi`, AMD via sysfs; fans hide when a machine has none).
@@ -94,7 +109,7 @@ omarchy-shell shell toggle community.omarchy-nexus '{}'
 
 The payload may name a page directly: `'{"page":"controls"}'` (pages:
 `overview`, `media`, `controls`, `style`, `notes`, `clipboard`,
-`minimizer`, `alerts`, `settings`).
+`minimizer`, `alerts`, `bar`, `settings`).
 
 ### Bar shortcut
 

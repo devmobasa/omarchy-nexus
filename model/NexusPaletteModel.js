@@ -37,6 +37,8 @@ var CONTROL_ENTRIES = [
   { kind: KINDS.CONTROL, arg: "mute-microphone", title: "Mute / unmute microphone", icon: "󰍭" },
   { kind: KINDS.CONTROL, arg: "game-mode", title: "Toggle Game Mode", icon: "󰊴" },
   { kind: KINDS.CONTROL, arg: "pomodoro", title: "Start / pause Pomodoro", icon: "󰄉" },
+  { kind: KINDS.CONTROL, arg: "brightness-up", title: "Brightness +5%", icon: "󰃟" },
+  { kind: KINDS.CONTROL, arg: "brightness-down", title: "Brightness −5%", icon: "󰃞" },
   { kind: KINDS.CONTROL, arg: "capture", title: "Capture (screenshot / record)", icon: "󰄀" },
   { kind: KINDS.CONTROL, arg: "power", title: "Power menu", icon: "󰐥" },
   { kind: KINDS.CONTROL, arg: "theme", title: "Change theme", icon: "󰸌" },
@@ -72,8 +74,10 @@ function fuzzyScore(query, text) {
   return score * 1000 - haystack.length
 }
 
-// Rank entries against the query over "title subtitle". An empty query
-// returns the head of the catalogue in assembly order.
+// Rank entries against the query in two tiers: a title match ALWAYS
+// outranks a subtitle-only match, however good the subtitle hit — so a
+// control named for the query never loses to a long keybind description.
+// An empty query returns the head of the catalogue in assembly order.
 function filterEntries(entries, query, cap) {
   var list = entries && typeof entries.length === "number" ? entries : []
   var limit = Math.floor(Number(cap))
@@ -84,12 +88,18 @@ function filterEntries(entries, query, cap) {
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
     if (!entry) continue
-    var haystack = String(entry.title || "") + " " + String(entry.subtitle || "")
-    var score = fuzzyScore(trimmed, haystack)
-    if (score < 0) continue
-    scored.push({ entry: entry, score: score, index: i })
+    var titleScore = fuzzyScore(trimmed, String(entry.title || ""))
+    var subtitleScore = fuzzyScore(trimmed, String(entry.subtitle || ""))
+    if (titleScore < 0 && subtitleScore < 0) continue
+    scored.push({
+      entry: entry,
+      tier: titleScore >= 0 ? 1 : 0,
+      score: titleScore >= 0 ? titleScore : subtitleScore,
+      index: i
+    })
   }
   scored.sort(function (a, b) {
+    if (a.tier !== b.tier) return b.tier - a.tier
     if (a.score !== b.score) return b.score - a.score
     return a.index - b.index
   })
@@ -98,12 +108,26 @@ function filterEntries(entries, query, cap) {
   return out
 }
 
+// Inline ghost completion: when the top result's title starts with the
+// query (case-insensitive), the remainder renders as ghost text and Tab
+// accepts it. Anything else completes nothing — mid-word ghosts read as
+// noise.
+function ghostRemainder(query, results) {
+  var trimmed = String(query == null ? "" : query)
+  if (trimmed.length === 0 || !results || results.length === 0) return ""
+  var title = String(results[0].title || "")
+  if (title.length <= trimmed.length) return ""
+  if (title.slice(0, trimmed.length).toLowerCase() !== trimmed.toLowerCase()) return ""
+  return title.slice(trimmed.length)
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     MAX_RESULTS: MAX_RESULTS,
     KINDS: KINDS,
     CONTROL_ENTRIES: CONTROL_ENTRIES,
     fuzzyScore: fuzzyScore,
-    filterEntries: filterEntries
+    filterEntries: filterEntries,
+    ghostRemainder: ghostRemainder
   }
 }

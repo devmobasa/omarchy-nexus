@@ -1,3 +1,4 @@
+import "model/NexusContrastModel.js" as NexusContrastModel
 import "model/NexusSuiteModel.js" as NexusSuiteModel
 import QtQuick
 import Quickshell
@@ -32,7 +33,9 @@ BarWidget {
     active: root.nexusOpen
     tooltipText: (root.nexusOpen ? "Close Nexus" : "Open Nexus")
       + (root.pendingCount > 0 ? " · " + root.pendingCount + " unseen alerts" : "")
-    onPressed: if (root.shellRoot) root.shellRoot.toggle("community.omarchy-nexus", "{}")
+    // With unseen alerts, opening lands on the page that needs attention.
+    onPressed: if (root.shellRoot) root.shellRoot.toggle("community.omarchy-nexus",
+      root.pendingCount > 0 ? "{\"page\":\"alerts\"}" : "{}")
   }
 
   Rectangle {
@@ -50,7 +53,11 @@ BarWidget {
       id: badgeText
       anchors.centerIn: parent
       text: root.pendingCount > 99 ? "99+" : String(root.pendingCount)
-      color: Color.menu.background
+      // WCAG-picked: whichever of background/text reads better on the
+      // accent fill, so no theme can make the badge unreadable.
+      color: NexusContrastModel.readableIndex(Color.accent,
+        [Color.menu.background, Color.menu.text]) === 0
+        ? Color.menu.background : Color.menu.text
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       font.bold: true

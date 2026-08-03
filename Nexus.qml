@@ -30,6 +30,7 @@ Item {
     property alias paletteQuery: palette.query
     property alias paletteCursor: palette.cursor
     readonly property var paletteResults: palette.results
+    readonly property string paletteGhost: palette.ghost
     readonly property string pluginId: manifest && manifest.id ? manifest.id : "community.omarchy-nexus"
     readonly property real volumeStep: 0.05
     readonly property int seekStepSeconds: 5
@@ -64,13 +65,14 @@ Item {
     readonly property bool outputMuted: controls.outputMuted
     readonly property bool inputMuted: controls.inputMuted
     readonly property var btAdapter: controls.btAdapter
+    readonly property real micLevel: controls.micLevel
+    readonly property bool brightnessAvailable: controls.brightnessAvailable
+    readonly property int brightnessPercent: controls.brightnessPercent
     readonly property var keybindRows: controls.keybindRows
     readonly property var filteredKeybinds: controls.filteredKeybinds
     property alias keysQuery: controls.keysQuery
     readonly property var sensorReadings: sensors.sensorReadings
-    readonly property var cavaController: cava
     readonly property bool cavaAvailable: cava.cavaAvailable
-    readonly property bool cavaConfWritten: cava.cavaConfWritten
     readonly property var cavaBars: cava.cavaBars
     readonly property bool cavaRunning: cava.running
     readonly property var screenTimeSummary: suite.screenTimeSummary
@@ -81,6 +83,11 @@ Item {
     readonly property var failedUnits: alerts.failedUnits
     readonly property string unitBusy: alerts.unitBusy
     readonly property string unitError: alerts.unitError
+    readonly property var logIssues: alerts.logIssues
+    readonly property var barRows: barEditor.barRows
+    readonly property var availableBarWidgets: barEditor.availableWidgets
+    readonly property bool barEditable: barEditor.editable
+    readonly property string barEditError: barEditor.editError
     readonly property var clipboardRows: suite.clipboardRows
     readonly property var pinnedClipboardRows: suite.pinnedRows
     // Keyboard cursor and activation walk pins-then-history as one list.
@@ -105,6 +112,9 @@ Item {
     readonly property var netTxRate: metrics.netTxRate
     readonly property var netRxHistory: metrics.netRxHistory
     readonly property var netTxHistory: metrics.netTxHistory
+    readonly property string routerLatency: latency.routerLatency
+    readonly property string internetLatency: latency.internetLatency
+    readonly property bool routerKnown: latency.routerHost !== ""
     readonly property var cpuHistory: metrics.cpuHistory
     readonly property var memHistory: metrics.memHistory
     readonly property var uptimeSeconds: metrics.uptimeSeconds
@@ -160,7 +170,6 @@ Item {
         if (root.settings.showSensors)
             sensors.discover();
 
-        persistence.prepareCava();
         if (root.page === NexusModel.PAGE_KEYS)
             controls.refreshBinds();
 
@@ -186,6 +195,8 @@ Item {
         suite.resetTransient();
         minimizer.resetSession();
         alerts.resetSession();
+        latency.resetSession();
+        barEditor.resetSession();
         persistence.resetTransient();
         closingFromHost = false;
     }
@@ -207,7 +218,13 @@ Item {
             "screen": root.targetScreen ? String(root.targetScreen.name || "") : "",
             "metricsActive": root.metricsActive,
             "pendingAction": root.pendingAction,
-            "focusRole": root.focusRole
+            "focusRole": root.focusRole,
+            "cavaState": cava.cavaState,
+            "cavaAvailable": cava.cavaAvailable,
+            "cavaFailureCount": cava.failureCount,
+            "cavaStartCount": cava.workerStartCount,
+            "cavaLastExitCode": cava.lastExitCode,
+            "cavaLastError": cava.lastError
         });
     }
 
@@ -253,6 +270,9 @@ Item {
     }
 
     function setOutputVolume(value) { controls.setOutputVolume(value) }
+    function setBrightness(value) { controls.setBrightness(value) }
+    function previewBrightness(value) { controls.previewBrightness(value) }
+    function stepBrightness(delta) { controls.stepBrightness(delta) }
     function toggleOutputMute() { controls.toggleOutputMute() }
     function toggleInputMute() { controls.toggleInputMute() }
     function toggleDnd() { controls.toggleDnd() }
@@ -269,6 +289,11 @@ Item {
     function invokeNotificationAction(row) { alerts.invokeAction(row) }
     function restartUnit(row) { alerts.runUnitAction("restart", row) }
     function resetFailedUnit(row) { alerts.runUnitAction("reset-failed", row) }
+    function moveBarRowUp(row) { barEditor.moveRowUp(row) }
+    function moveBarRowDown(row) { barEditor.moveRowDown(row) }
+    function moveBarRowSection(row) { barEditor.moveRowSection(row) }
+    function removeBarRow(row) { barEditor.removeRow(row) }
+    function addBarWidget(id) { barEditor.addWidget(id) }
     function copyClipboardRow(row) { suite.copyClipboardRow(row) }
     function togglePinClipboard(row) { suite.togglePinRow(row) }
     function copyText(text, preview) { suite.copyText(text, preview) }
@@ -277,6 +302,7 @@ Item {
     function openPalette(seed) { palette.openPalette(seed) }
     function closePalette() { palette.closePalette() }
     function runPaletteEntry(entry) { palette.runEntry(entry) }
+    function acceptPaletteGhost() { return palette.acceptGhost() }
     function refreshBinds() { controls.refreshBinds() }
     function updateNotes(text) { suite.updateNotes(text) }
     function refreshMedia() { media.refreshMedia() }
@@ -406,6 +432,12 @@ Item {
         nexus: root
     }
 
+    NexusBarEditorState {
+        id: barEditor
+
+        nexus: root
+    }
+
     NexusMediaState {
         id: media
 
@@ -414,6 +446,12 @@ Item {
 
     NexusMetricsState {
         id: metrics
+
+        nexus: root
+    }
+
+    NexusLatencyState {
+        id: latency
 
         nexus: root
     }

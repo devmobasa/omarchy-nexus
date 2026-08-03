@@ -73,6 +73,25 @@ BorderSurface {
 
         }
 
+        // Split-path latency: the LAN router leg vs the internet leg —
+        // one look answers "my network or my ISP".
+        Item {
+            width: parent.width
+            height: latencyLine.implicitHeight
+            visible: nexus.routerKnown || nexus.internetLatency !== "--"
+
+            Text {
+                id: latencyLine
+
+                anchors.left: parent.left
+                text: (nexus.routerKnown ? "router " + nexus.routerLatency + " · " : "") + "internet " + nexus.internetLatency
+                color: nexus.internetLatency === "timeout" || nexus.routerLatency === "timeout" ? Color.urgent : Qt.darker(Color.menu.text, 1.35)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+            }
+
+        }
+
         Item {
             id: netSparkline
 

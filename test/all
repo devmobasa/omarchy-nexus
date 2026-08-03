@@ -16,6 +16,8 @@ for test_file in "$PLUGIN_DIR"/test/*.test.js; do
   node "$test_file"
 done
 
+"$PLUGIN_DIR"/test/qml-smoke/run
+
 OMARCHY_PATH="$OMARCHY_SOURCE" omarchy plugin validate "$PLUGIN_DIR"
 
 for qml_file in "$PLUGIN_DIR"/*.qml "$PLUGIN_DIR"/ui/*.qml "$PLUGIN_DIR"/state/*.qml; do

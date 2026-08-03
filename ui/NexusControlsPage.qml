@@ -55,6 +55,43 @@ Column {
         }
     }
 
+    // Live input peak: what the mic actually hears, -55 dBFS floor to
+    // full scale. Zero (and flat) while muted.
+    Item {
+        width: parent.width
+        height: Style.space(4)
+        visible: nexus.audioSource !== null
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: Style.space(3)
+            radius: height / 2
+            color: nexus.softText(0.1)
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: parent.width * nexus.micLevel
+                radius: parent.radius
+                color: nexus.inputMuted ? nexus.softAccent(0.25) : nexus.softAccent(0.7)
+
+                Behavior on width {
+                    NumberAnimation {
+                        duration: 70
+                        easing.type: Easing.OutCubic
+                    }
+
+                }
+
+            }
+
+        }
+
+    }
+
     Toggle {
         width: parent.width
         label: "Do not disturb"

@@ -37,8 +37,10 @@ assert.equal(manifest.license, 'MIT')
 assert.match(read('LICENSE'), /MIT License/)
 
 const nexusEntry = read('Nexus.qml')
+// Test fixtures (the qml-smoke harness is deliberately a ShellRoot) are
+// not part of the shipped plugin surface.
 const qmlSource = repositoryFiles
-  .filter(absolute => absolute.endsWith('.qml'))
+  .filter(absolute => absolute.endsWith('.qml') && !absolute.includes(`${path.sep}test${path.sep}`))
   .sort()
   .map(absolute => fs.readFileSync(absolute, 'utf8'))
   .join('\n')
@@ -76,15 +78,18 @@ assert.match(nexus, /Hyprland\.focusedMonitor/, 'resolution starts from the focu
 assert.match(nexus, /ToplevelManager\.activeToplevel/, 'falls back to the active toplevel screen')
 assert.match(nexus, /onScreensChanged/, 'screen disappearance retargets or closes')
 
-// Closed-state dormancy and animation policy. Six timers total; five are
-// gated on `opened` (clock, both samplers, media position tick, sensors
-// cadence). The sixth, pendingClearTimer, is a one-shot 400 ms clear
-// started only from dispatchControl, which no-ops while closed. Pinning the
+// Closed-state dormancy and animation policy. Twelve timers total, each
+// reviewed: clock, both metric samplers, media tick, sensors cadence (all
+// `opened`-gated); pendingClear (one-shot, user action); notes autosave
+// (gated on notesDirty); armed-close decay (one-shot, click-started);
+// cava retry (one-shot, crash-started, stopped on close); latency poll
+// (gated on the Network card being visible); brightness poll (gated on
+// the Controls page) and its one-shot 180 ms drag debounce. Pinning the
 // total means any new timer fails this test until reviewed for dormancy.
-assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 8,
-  'the timer inventory is pinned: a new timer must be reviewed for dormancy (the seventh is the notes autosave debounce, gated on notesDirty; the eighth is the one-shot 3 s armed-close decay, started only by clicking a close action)')
-assert.equal((nexus.match(/running: root\.opened/g) || []).length, 6,
-  'five recurring timers plus the cava process are gated on the panel being open')
+assert.equal((nexus.match(/\bTimer\s*\{/g) || []).length, 12,
+  'the timer inventory is pinned: a new timer must be reviewed for dormancy')
+assert.equal((nexus.match(/running: root\.opened/g) || []).length, 5,
+  'the five always-recurring timers are gated on the panel being open')
 assert.match(nexus, /Behavior on entrance/, 'open uses a bounded entrance animation')
 assert.doesNotMatch(nexus, /execDetached|bash -c|sh -c/, 'no shell command strings, ever')
 
@@ -92,8 +97,8 @@ assert.doesNotMatch(nexus, /execDetached|bash -c|sh -c/, 'no shell command strin
 // two proc samplers, three user-action game-mode/settings steps, the keys
 // fetch, sensor discovery + sampling + nvidia-smi, and cava. hyprctl
 // appears in exactly two commands (reload, binds).
-assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 14,
-  'the process inventory is pinned: a new process must be reviewed (the eleventh is the user-action wl-copy; twelve and thirteen list failed units only on entering the Alerts page; fourteen is the user-action systemctl restart/reset-failed)')
+assert.equal((nexus.match(/\bProcess\s*\{/g) || []).length, 20,
+  'the process inventory is pinned: a new process must be reviewed — samplers (proc stat, df), game-mode/settings steps (mkdir, rm, hyprctl reload), keys fetch, sensors (discovery, sample, nvidia-smi), cava worker, wl-copy, failed-unit lists x2 + unit action, shell-log tail, latency (route + two pings), brightness (state read, set)')
 assert.match(nexus, /NexusSuiteModel\.copyCommand/, 'clipboard copies build through the model')
 assert.match(nexus, /NexusSuiteModel\.parseClipboard/, 'clipboard history parses through the model')
 assert.match(nexus, /summonSibling\("omarchy\.clipboard"\)/, 'image clips defer to the full manager')
@@ -137,17 +142,22 @@ assert.match(nexus, /sensorsSpec\.gpu\.kind === "nvidia" && nvidiaAvailable/,
   'nvidia-smi runs only when the display GPU needs it and it works')
 assert.match(nexus, /root\.settings\.showSensors/, 'showSensors gates the card and cadence')
 
-// Cava visualizer: config and frames through the model; the process runs
-// only while open on Overview with media playing; a start failure (cava not
-// installed) hides the strip instead of erroring.
-assert.match(nexus, /NexusCavaModel\.buildConfig\(\)/)
+// Cava visualizer: config over stdin (no file on disk), frames through
+// the model, an explicit crash-retry state machine, and a start failure
+// (cava not installed) that hides the strip instead of erroring.
+assert.match(nexus, /write\(NexusCavaModel\.buildConfig\(\)\)/, 'the config is written to stdin')
+assert.match(nexus, /stdinEnabled = false/, 'EOF starts the stream')
+assert.match(nexus, /stdinEnabled = true/, 'and stdin is re-armed before every restart')
+assert.doesNotMatch(nexus, /nexus-cava\.conf/, 'no cava config file exists anymore')
 assert.match(nexus, /NexusCavaModel\.parseFrame/)
 assert.match(nexus, /NexusCavaModel\.cavaCommand/)
-assert.match(nexus, /root\.mediaSelected !== null && root\.mediaSelected\.isPlaying/,
+assert.match(nexus, /NexusCavaModel\.retryDelay/, 'crash retries use the tested backoff')
+assert.match(nexus, /mediaSelected !== null && mediaSelected\.isPlaying/,
   'cava runs only while media actually plays')
-assert.match(nexus, /if \(!running && !exitSeen\)\s+root\.cavaAvailable = false/,
-  'a missing cava binary degrades cleanly')
-assert.match(nexus, /root\.settings\.showVisualizer/)
+assert.match(nexus, /if \(!running && !startSeen\) \{/,
+  'a missing cava binary degrades cleanly (FailedToStart emits no exited)')
+assert.match(nexus, /intentionalStop/, 'an owner stop never counts as a crash')
+assert.match(nexus, /settings\.showVisualizer/)
 assert.match(nexus, /command: \["cat", "\/proc\/stat", "\/proc\/meminfo", "\/proc\/net\/dev", "\/proc\/uptime"\]/,
   'cpu/mem/net/uptime sampling reads proc files with one argument array')
 assert.match(nexus, /command: \["df", "-P", "-k", "\/"\]/,
@@ -276,8 +286,8 @@ const widget = read('NexusBarWidget.qml')
 assert.match(widget, /^BarWidget \{/m, 'the bar entry point is the shared BarWidget base')
 assert.match(widget, /isPluginOpen\("community\.omarchy-nexus"\)/,
   'the active state reads the host open map')
-assert.match(widget, /shellRoot\.toggle\("community\.omarchy-nexus", "\{\}"\)/,
-  'the click goes through the host toggle')
+assert.match(widget, /shellRoot\.toggle\("community\.omarchy-nexus",\s*\n?\s*root\.pendingCount > 0 \? "\{\\"page\\":\\"alerts\\"\}" : "\{\}"\)/,
+  'the click goes through the host toggle, landing on Alerts when unseen alerts exist')
 assert.match(widget, /bar \? bar\.shell : null/, 'a null bar at construction is tolerated')
 assert.doesNotMatch(widget, /\bProcess\s*\{|\bTimer\s*\{/, 'the widget is purely reactive')
 

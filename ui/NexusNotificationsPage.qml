@@ -85,6 +85,33 @@ Column {
         wrapMode: Text.Wrap
     }
 
+    // ---- shell log self-diagnostics -----------------------------------------
+    Text {
+        visible: nexus.logIssues.length > 0
+        width: parent.width
+        text: nexus.logIssues.length + " shell log " + (nexus.logIssues.length === 1 ? "issue" : "issues") + " since config load"
+        color: Color.urgent
+        font.family: Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+    }
+
+    Repeater {
+        model: nexus.logIssues
+
+        Text {
+            required property string modelData
+
+            width: parent.width
+            text: modelData
+            color: Qt.darker(Color.menu.text, 1.3)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+        }
+
+    }
+
     // ---- notification history -----------------------------------------------
     Item {
         width: parent.width

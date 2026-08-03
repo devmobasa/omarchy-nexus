@@ -1,6 +1,8 @@
 import "../model/NexusAlertsModel.js" as NexusAlertsModel
+import "../model/NexusDiagnosticsModel.js" as NexusDiagnosticsModel
 import "../model/NexusModel.js" as NexusModel
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 // Failed systemd units for the Alerts page: both scopes listed on entry,
@@ -18,6 +20,10 @@ Item {
     // Single-flight: one unit action at a time, keyed for the row spinner.
     property string unitBusy: ""
     property string unitError: ""
+    // Shell-log self-diagnostics: QML errors since the last config load,
+    // read from this instance's own mirrored log file.
+    property var logIssues: []
+    readonly property string ownLogPath: NexusDiagnosticsModel.logPath(Quickshell.env("XDG_RUNTIME_DIR"), Quickshell.instanceId)
 
     function refreshFailed() {
         if (!systemProcess.running)
@@ -26,6 +32,11 @@ Item {
         if (!userProcess.running)
             userProcess.running = true;
 
+        const command = NexusDiagnosticsModel.tailCommand(ownLogPath);
+        if (command.length > 0 && !logProcess.running) {
+            logProcess.command = command;
+            logProcess.running = true;
+        }
     }
 
     function runUnitAction(verb, row) {
@@ -47,6 +58,7 @@ Item {
         userFailed = [];
         unitBusy = "";
         unitError = "";
+        logIssues = [];
     }
 
     // ---- notification row actions (through the live service) -----------------
@@ -131,6 +143,22 @@ Item {
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: state.userFailed = NexusAlertsModel.parseFailedUnits(text, NexusAlertsModel.SCOPE_USER)
+        }
+
+    }
+
+    Process {
+        id: logProcess
+
+        property bool exitSeen: false
+
+        command: ["tail", "--version"]
+        onStarted: exitSeen = false
+        onExited: exitSeen = true
+
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: state.logIssues = NexusDiagnosticsModel.scanLog(text)
         }
 
     }

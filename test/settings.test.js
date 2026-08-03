@@ -65,4 +65,13 @@ assert.equal(read([{ id: ID, defaultPage: 'style' }, { id: ID, defaultPage: 'con
 assert.equal(read([{ id: ID, showMedia: 0 }]).showMedia, true)
 assert.equal(read([{ id: ID, showMedia: false }]).showMedia, false)
 
+// The serializer doubles as the equality gate for skip-equal writes: it
+// must be deterministic and immune to hostile keys in a hand-edited file.
+assert.equal(settings.buildStateJson({ showMedia: true, gmBlur: false }),
+  settings.buildStateJson({ gmBlur: false, showMedia: true }),
+  'stable key order regardless of insertion order')
+const hostile = settings.parseState('{"__proto__": {"x": 1}, "constructor": 2, "showMedia": false}')
+assert.deepEqual(Object.keys(hostile), ['showMedia'], 'unknown and prototype keys never survive parsing')
+assert.equal(({}).x, undefined, 'no prototype pollution occurred')
+
 console.log('ok - nexus settings model')

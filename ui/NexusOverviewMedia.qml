@@ -211,6 +211,9 @@ BorderSurface {
 
         // Audio spectrum: subtle accent bars fed by cava while
         // something plays; absent cleanly when cava is not installed.
+        // The model is the constant band COUNT: the 24 delegates are
+        // created once and only their heights rebind per frame — a JS
+        // array model would destroy and recreate them 30 times a second.
         Row {
             width: parent.width
             height: Style.space(18)
@@ -218,13 +221,15 @@ BorderSurface {
             spacing: Math.max(1, Math.floor(width / NexusCavaModel.BAR_COUNT * 0.25))
 
             Repeater {
-                model: nexus.cavaBars
+                model: NexusCavaModel.BAR_COUNT
 
                 Rectangle {
-                    required property real modelData
+                    required property int index
+
+                    readonly property real level: nexus.cavaBars[index] || 0
 
                     width: Math.max(2, (parent.width - (NexusCavaModel.BAR_COUNT - 1) * parent.spacing) / NexusCavaModel.BAR_COUNT)
-                    height: Math.max(2, parent.height * modelData)
+                    height: Math.max(2, parent.height * level)
                     y: parent.height - height
                     radius: 1
                     color: nexus.softAccent(0.45)

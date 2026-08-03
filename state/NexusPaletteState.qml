@@ -105,6 +105,16 @@ Item {
         return entries;
     }
     readonly property var results: NexusPaletteModel.filterEntries(source, query, NexusPaletteModel.MAX_RESULTS)
+    readonly property string ghost: NexusPaletteModel.ghostRemainder(query, results)
+
+    function acceptGhost() {
+        if (ghost === "")
+            return false;
+
+        query = query + ghost;
+        cursor = 0;
+        return true;
+    }
 
     function controlSubtitle(name) {
         if (name === "dnd")
@@ -164,6 +174,10 @@ Item {
             nexus.toggleGameMode();
         else if (name === "pomodoro")
             nexus.togglePomodoro();
+        else if (name === "brightness-up")
+            nexus.stepBrightness(5);
+        else if (name === "brightness-down")
+            nexus.stepBrightness(-5);
         else if (name === "clear-alerts")
             nexus.clearNotificationHistory();
         else if (NexusModel.MENU_ROUTES[name] !== undefined)

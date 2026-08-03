@@ -1,4 +1,7 @@
+import "../model/NexusAudioModel.js" as NexusAudioModel
+import "../model/NexusBrightnessModel.js" as NexusBrightnessModel
 import "../model/NexusKeybindsModel.js" as NexusKeybindsModel
+import "../model/NexusModel.js" as NexusModel
 import QtQuick
 import Quickshell.Bluetooth
 import Quickshell.Io
@@ -24,6 +27,11 @@ Item {
     readonly property bool inputMuted: audioSource && audioSource.audio ? audioSource.audio.muted === true : false
     // ---- bluetooth (native reactive adapter state) ---------------------------
     readonly property var btAdapter: Bluetooth.defaultAdapter
+    // ---- microphone peak (native PipeWire monitor, no process) ---------------
+    // The monitor opens a real capture stream, so it is gated hard: only
+    // while the Controls page is visible and the mic is unmuted. Updates
+    // arrive per graph quantum (~21 ms at the default 1024/48000).
+    readonly property real micLevel: micPeakMonitor.enabled ? NexusAudioModel.peakToMeter(micPeakMonitor.peak) : 0
     // ---- keybind cheatsheet (plain-text hyprctl binds) -----------------------
     // The JSON form blanks the key for every code:NN bind, so the text output
     // is the source of truth. Fetched on each entry to the keys page; typing
@@ -32,6 +40,55 @@ Item {
     property var keybindRows: []
     property string keysQuery: ""
     readonly property var filteredKeybinds: NexusKeybindsModel.filterBinds(keybindRows, keysQuery)
+    // ---- brightness (focused monitor, via omarchy's own CLI) -----------------
+    // Optimistic local value; NEVER re-read right after a set (it races the
+    // hardware and can bounce to zero) — external changes arrive via the
+    // page-gated 5 s poll. A single-slot queue coalesces slider drags so at
+    // most one set process is ever in flight.
+    property bool brightnessAvailable: false
+    property int brightnessPercent: 0
+    property string brightnessMonitor: ""
+    property int pendingBrightness: -1
+    readonly property bool brightnessActive: opened && nexus.page === NexusModel.PAGE_CONTROLS
+
+    function refreshBrightness() {
+        if (!brightnessStateProcess.running)
+            brightnessStateProcess.running = true;
+
+    }
+
+    function setBrightness(value) {
+        if (!brightnessAvailable || brightnessMonitor === "")
+            return ;
+
+        const percent = NexusBrightnessModel.clampBrightness(value);
+        brightnessPercent = percent;
+        if (brightnessSetProcess.running) {
+            pendingBrightness = percent;
+            return ;
+        }
+        const command = NexusBrightnessModel.setCommand(brightnessMonitor, percent);
+        if (command.length === 0)
+            return ;
+
+        brightnessSetProcess.command = command;
+        brightnessSetProcess.running = true;
+    }
+
+    function previewBrightness(value) {
+        brightnessPercent = NexusBrightnessModel.clampBrightness(value);
+        brightnessDebounce.restart();
+    }
+
+    function stepBrightness(delta) {
+        setBrightness(brightnessPercent + delta);
+    }
+
+    onBrightnessActiveChanged: {
+        if (brightnessActive)
+            refreshBrightness();
+
+    }
 
     function refreshServices() {
         var host = shell && typeof shell.serviceFor === "function" ? shell : null;
@@ -93,6 +150,13 @@ Item {
         objects: state.opened ? [state.audioSink, state.audioSource].filter(Boolean) : []
     }
 
+    PwNodePeakMonitor {
+        id: micPeakMonitor
+
+        node: state.audioSource
+        enabled: state.opened && state.nexus.page === NexusModel.PAGE_CONTROLS && state.audioSource !== null && !state.inputMuted
+    }
+
     Process {
         id: bindsProcess
 
@@ -103,6 +167,69 @@ Item {
             onStreamFinished: state.keybindRows = NexusKeybindsModel.parseBindsText(text)
         }
 
+    }
+
+    Timer {
+        running: state.brightnessActive
+        interval: NexusBrightnessModel.POLL_INTERVAL_MS
+        repeat: true
+        onTriggered: state.refreshBrightness()
+    }
+
+    Timer {
+        id: brightnessDebounce
+
+        interval: NexusBrightnessModel.DRAG_DEBOUNCE_MS
+        onTriggered: state.setBrightness(state.brightnessPercent)
+    }
+
+    Process {
+        id: brightnessStateProcess
+
+        property bool exitSeen: false
+
+        command: NexusBrightnessModel.stateCommand()
+        onStarted: exitSeen = false
+        onRunningChanged: {
+            if (!running && !exitSeen)
+                state.brightnessAvailable = false;
+
+        }
+        onExited: exitSeen = true
+
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                const parsed = NexusBrightnessModel.parseMonitorState(text);
+                state.brightnessAvailable = parsed.available;
+                state.brightnessMonitor = parsed.monitor;
+                if (parsed.available && !brightnessSetProcess.running && !brightnessDebounce.running)
+                    state.brightnessPercent = parsed.percent;
+
+            }
+        }
+
+    }
+
+    Process {
+        id: brightnessSetProcess
+
+        property bool exitSeen: false
+
+        command: ["omarchy-brightness-display", "--help"]
+        onStarted: exitSeen = false
+        onExited: {
+            exitSeen = true;
+            if (state.pendingBrightness >= 0) {
+                const queued = state.pendingBrightness;
+                state.pendingBrightness = -1;
+                const command = NexusBrightnessModel.setCommand(state.brightnessMonitor, queued);
+                if (command.length > 0) {
+                    brightnessSetProcess.command = command;
+                    brightnessSetProcess.running = true;
+                }
+            }
+        }
     }
 
 }

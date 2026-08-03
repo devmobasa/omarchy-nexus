@@ -54,10 +54,13 @@ BorderSurface {
 
                 Text {
                     anchors.right: parent.right
-                    text: modelData.value
-                    color: Color.menu.text
+                    // Colored by the hardware's own declared limits when
+                    // it declares any; plain otherwise.
+                    text: modelData.value + (modelData.severity === "warn" && modelData.maxC !== null ? " (max " + modelData.maxC + "°)" : "")
+                    color: modelData.severity === "crit" ? Color.urgent : (modelData.severity === "warn" ? Color.accent : Color.menu.text)
                     font.family: Style.font.family
                     font.pixelSize: Style.font.bodySmall
+                    font.bold: modelData.severity !== "" && modelData.severity !== undefined
                 }
 
             }

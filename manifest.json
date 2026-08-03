@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "community.omarchy-nexus",
   "name": "Omarchy Nexus",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": "devmobasa",
   "description": "A themed desktop cockpit for media, system state, controls, and style",
   "license": "MIT",

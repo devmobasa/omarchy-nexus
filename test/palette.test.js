@@ -39,6 +39,25 @@ const many = []
 for (let i = 0; i < 40; i++) many.push({ kind: 'page', arg: String(i), title: 'Entry ' + i, subtitle: '' })
 assert.equal(model.filterEntries(many, 'entry', 8).length, model.MAX_RESULTS)
 
+// Tiered ranking: a weak title match still outranks a strong subtitle-only
+// match, so controls never lose to keybind descriptions.
+const tiered = [
+  { kind: 'keybind', arg: 'x', title: 'SUPER + Q', subtitle: 'night light toggle helper thing' },
+  { kind: 'control', arg: 'night-light', title: 'Toggle Night Light', subtitle: 'off' }
+]
+assert.equal(model.filterEntries(tiered, 'night', 8)[0].arg, 'night-light')
+
+// Ghost completion: only a case-insensitive prefix of the TOP result's
+// title completes; anything else stays empty.
+const ghostResults = [{ title: 'Toggle Night Light' }, { title: 'Night owl' }]
+assert.equal(model.ghostRemainder('togg', ghostResults), 'le Night Light')
+assert.equal(model.ghostRemainder('TOGG', ghostResults), 'le Night Light', 'case-insensitive prefix')
+assert.equal(model.ghostRemainder('night', ghostResults), '', 'mid-title match never ghosts')
+assert.equal(model.ghostRemainder('', ghostResults), '')
+assert.equal(model.ghostRemainder('x', []), '')
+assert.equal(model.ghostRemainder('toggle night light', [{ title: 'Toggle Night Light' }]), '',
+  'a fully typed title ghosts nothing')
+
 // The control catalogue: args unique, kinds valid, every entry titled.
 const seen = new Set()
 for (const entry of model.CONTROL_ENTRIES) {

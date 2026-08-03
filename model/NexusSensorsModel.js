@@ -15,11 +15,23 @@ var SENSOR_INTERVAL_MS = 5000
 function discoveryCommand() {
   return ["find", "-L", "/sys/class/hwmon", "/sys/class/drm", "-maxdepth", "3",
     "(", "-name", "name", "-o", "-name", "temp*_input", "-o", "-name", "temp*_label",
+    "-o", "-name", "temp*_max", "-o", "-name", "temp*_crit",
     "-o", "-name", "fan*_input", "-o", "-name", "fan*_label",
     "-o", "-name", "boot_vga", "-o", "-name", "vendor",
     "-o", "-name", "gpu_busy_percent", "-o", "-name", "mem_info_vram_used",
     "-o", "-name", "mem_info_vram_total", ")",
     "-exec", "grep", "-H", ".", "{}", "+"]
+}
+
+// Hardware-declared limits are static, so they are captured at discovery
+// and never re-sampled. Sanity clamp: NVMe ships sentinel limits like
+// 65261850 (65261 °C) and negative minimums; anything outside (0, 150] °C
+// is treated as undeclared.
+function clampLimit(milli) {
+  var n = Number(milli)
+  if (!isFinite(n)) return null
+  var c = Math.round(n / 1000)
+  return c > 0 && c <= 150 ? c : null
 }
 
 function parseLines(text) {
@@ -34,7 +46,7 @@ function parseLines(text) {
   return map
 }
 
-var HWMON_RE = /^\/sys\/class\/hwmon\/(hwmon\d+)\/(name|(?:temp|fan)\d+_(?:input|label))$/
+var HWMON_RE = /^\/sys\/class\/hwmon\/(hwmon\d+)\/(name|(?:temp|fan)\d+_(?:input|label|max|crit))$/
 var DRM_RE = /^\/sys\/class\/drm\/(card\d+)\/device\/(boot_vga|vendor|gpu_busy_percent|mem_info_vram_used|mem_info_vram_total)$/
 
 // Build the machine catalog from discovery output.
@@ -51,14 +63,18 @@ function parseDiscovery(text) {
       if (file === "name") {
         hwmons[hwmonId].name = values[path].trim()
       } else {
-        var sensorMatch = /^(temp|fan)(\d+)_(input|label)$/.exec(file)
+        var sensorMatch = /^(temp|fan)(\d+)_(input|label|max|crit)$/.exec(file)
         var bucket = sensorMatch[1] === "temp" ? hwmons[hwmonId].temps : hwmons[hwmonId].fans
         var index = sensorMatch[2]
         if (!bucket[index]) bucket[index] = {}
         if (sensorMatch[3] === "input")
           bucket[index].inputPath = path
-        else
+        else if (sensorMatch[3] === "label")
           bucket[index].label = values[path].trim()
+        else if (sensorMatch[3] === "max")
+          bucket[index].maxC = clampLimit(values[path])
+        else
+          bucket[index].critC = clampLimit(values[path])
       }
       continue
     }
@@ -76,7 +92,14 @@ function tempsOf(hwmon) {
   var temps = []
   for (var index in hwmon.temps) {
     var temp = hwmon.temps[index]
-    if (temp.inputPath) temps.push({ path: temp.inputPath, label: temp.label || ("temp" + index) })
+    if (temp.inputPath) temps.push({
+      path: temp.inputPath,
+      label: temp.label || ("temp" + index),
+      // Limit presence is per-index, not per-chip: two same-name chips
+      // can expose different limit files.
+      maxC: temp.maxC !== undefined ? temp.maxC : null,
+      critC: temp.critC !== undefined ? temp.critC : null
+    })
   }
   temps.sort(function (a, b) { return a.path < b.path ? -1 : 1 })
   return temps
@@ -89,24 +112,32 @@ function tempsOf(hwmon) {
 // (0x1002) reads busy/vram from sysfs and its edge temp from the amdgpu
 // hwmon.
 function selectSensors(catalog) {
-  var spec = { cpu: null, nvme: [], fans: [], gpu: null }
+  var spec = { cpu: null, nvme: [], fans: [], gpu: null, dimms: [] }
   var nvmeIndex = 1
   for (var hwmonId in catalog.hwmons) {
     var hwmon = catalog.hwmons[hwmonId]
     var temps = tempsOf(hwmon)
-    if (hwmon.name === "k10temp" || hwmon.name === "coretemp") {
+    if (hwmon.name === "k10temp" || hwmon.name === "coretemp"
+      || hwmon.name === "zenpower" || hwmon.name === "cpu_thermal") {
       var pick = null
       for (var i = 0; i < temps.length; i++) {
         if (temps[i].label === "Tctl" || /^Package/.test(temps[i].label)) { pick = temps[i]; break }
       }
       if (!pick && temps.length > 0) pick = temps[0]
-      if (pick) spec.cpu = { path: pick.path }
+      if (pick) spec.cpu = { path: pick.path, maxC: pick.maxC, critC: pick.critC }
     } else if (hwmon.name === "nvme") {
       for (var j = 0; j < temps.length; j++) {
         if (temps[j].label === "Composite") {
-          spec.nvme.push({ path: temps[j].path, label: "NVMe " + nvmeIndex })
+          spec.nvme.push({ path: temps[j].path, label: "NVMe " + nvmeIndex,
+            maxC: temps[j].maxC, critC: temps[j].critC })
           nvmeIndex += 1
         }
+      }
+    } else if (hwmon.name === "spd5118" || hwmon.name === "jc42") {
+      // DDR5 SPD-hub (spd5118) or DDR4 (jc42) DIMM sensors; the card
+      // shows the hottest module as one Memory row.
+      for (var d = 0; d < temps.length; d++) {
+        spec.dimms.push({ path: temps[d].path, maxC: temps[d].maxC, critC: temps[d].critC })
       }
     }
     for (var fanIndex in hwmon.fans) {
@@ -151,6 +182,7 @@ function samplePaths(spec, catalog) {
   var paths = []
   if (spec.cpu) paths.push(spec.cpu.path)
   for (var i = 0; i < spec.nvme.length; i++) paths.push(spec.nvme[i].path)
+  for (var d = 0; d < (spec.dimms ? spec.dimms.length : 0); d++) paths.push(spec.dimms[d].path)
   for (var j = 0; j < spec.fans.length; j++) paths.push(spec.fans[j].path)
   if (spec.gpu && spec.gpu.kind === "amd") {
     for (var cardId in catalog.cards) {
@@ -203,13 +235,36 @@ function milliToC(value) {
   return isFinite(n) ? Math.round(n / 1000) : null
 }
 
-// Assemble display rows from one sample. Every row is {label, value}; rows
-// with no reading are omitted rather than rendered empty.
+// Severity of a reading against its hardware-declared limits: "crit"
+// at/over the critical trip, "warn" at/over the max, "" otherwise or when
+// the hardware declares nothing (this box's CPU and GPU declare none —
+// rows must degrade to plain temperature).
+function limitSeverity(tempC, maxC, critC) {
+  if (tempC === null || tempC === undefined) return ""
+  if (critC != null && tempC >= critC) return "crit"
+  if (maxC != null && tempC >= maxC) return "warn"
+  return ""
+}
+
+// Assemble display rows from one sample. Every row is {label, value} plus
+// numeric tempC/maxC/critC/severity for limit-aware rendering; rows with
+// no reading are omitted rather than rendered empty.
+function tempRow(label, tempC, maxC, critC) {
+  return {
+    label: label,
+    value: tempC + "°C",
+    tempC: tempC,
+    maxC: maxC != null ? maxC : null,
+    critC: critC != null ? critC : null,
+    severity: limitSeverity(tempC, maxC, critC)
+  }
+}
+
 function readings(spec, sampleMap, nvidia, catalog) {
   var rows = []
   if (spec.cpu && sampleMap[spec.cpu.path] !== undefined) {
     var cpuTemp = milliToC(sampleMap[spec.cpu.path])
-    if (cpuTemp !== null) rows.push({ label: "CPU", value: cpuTemp + "°C" })
+    if (cpuTemp !== null) rows.push(tempRow("CPU", cpuTemp, spec.cpu.maxC, spec.cpu.critC))
   }
   if (spec.gpu && spec.gpu.kind === "nvidia" && nvidia) {
     var gpuParts = [nvidia.utilPercent + "%"]
@@ -247,8 +302,20 @@ function readings(spec, sampleMap, nvidia, catalog) {
   for (var i = 0; i < spec.nvme.length; i++) {
     var nvmeTemp = sampleMap[spec.nvme[i].path] !== undefined
       ? milliToC(sampleMap[spec.nvme[i].path]) : null
-    if (nvmeTemp !== null) rows.push({ label: spec.nvme[i].label, value: nvmeTemp + "°C" })
+    if (nvmeTemp !== null)
+      rows.push(tempRow(spec.nvme[i].label, nvmeTemp, spec.nvme[i].maxC, spec.nvme[i].critC))
   }
+  var hottestDimm = null
+  for (var m = 0; m < (spec.dimms ? spec.dimms.length : 0); m++) {
+    var dimm = spec.dimms[m]
+    if (sampleMap[dimm.path] === undefined) continue
+    var dimmTemp = milliToC(sampleMap[dimm.path])
+    if (dimmTemp === null) continue
+    if (hottestDimm === null || dimmTemp > hottestDimm.tempC)
+      hottestDimm = { tempC: dimmTemp, maxC: dimm.maxC, critC: dimm.critC }
+  }
+  if (hottestDimm !== null)
+    rows.push(tempRow("Memory", hottestDimm.tempC, hottestDimm.maxC, hottestDimm.critC))
   for (var j = 0; j < spec.fans.length; j++) {
     var rpm = sampleMap[spec.fans[j].path] !== undefined
       ? Number(sampleMap[spec.fans[j].path]) : null
@@ -260,6 +327,8 @@ function readings(spec, sampleMap, nvidia, catalog) {
 if (typeof module !== "undefined") {
   module.exports = {
     SENSOR_INTERVAL_MS: SENSOR_INTERVAL_MS,
+    clampLimit: clampLimit,
+    limitSeverity: limitSeverity,
     discoveryCommand: discoveryCommand,
     parseLines: parseLines,
     parseDiscovery: parseDiscovery,
