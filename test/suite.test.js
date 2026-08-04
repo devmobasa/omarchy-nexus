@@ -48,6 +48,21 @@ assert.equal(rows[1].body, 'multi line', 'bodies flatten to one line')
 assert.equal(model.parseNotifications(history, 2).length, 2, 'the cap applies')
 assert.deepEqual(model.parseNotifications('junk', 10), [])
 
+const iconFallback = model.parseNotifications(JSON.stringify({
+  version: 2,
+  pending: [],
+  past: [
+    { id: 9, app: '', appIcon: 'com.mitchellh.ghostty', summary: 'Ghostty', body: 'b', urgency: 1, timestamp: 500 },
+    { id: 10, app: '', appIcon: 'utilities-terminal', summary: 's', body: '', urgency: 1, timestamp: 400 },
+    { id: 11, app: '', appIcon: '/usr/share/icons/org.gnome.Maps.svg', summary: 's', body: '', urgency: 1, timestamp: 300 },
+    { id: 12, app: 'starship', appIcon: 'com.example.other', summary: 's', body: '', urgency: 1, timestamp: 200 }
+  ]
+}), 10)
+assert.equal(iconFallback[0].app, 'Ghostty', 'empty app falls back to the reverse-DNS icon id')
+assert.equal(iconFallback[1].app, '', 'generic themed icons are not app names')
+assert.equal(iconFallback[2].app, 'Maps', 'icon paths drop directory and extension')
+assert.equal(iconFallback[3].app, 'starship', 'a real app name always wins')
+
 assert.equal(model.relativeTime(1000, 1000 + 30000), 'now')
 assert.equal(model.relativeTime(1000, 1000 + 5 * 60000), '5 m ago')
 assert.equal(model.relativeTime(1000, 1000 + 3 * 3600000), '3 h ago')

@@ -82,6 +82,17 @@ function notificationsPath(xdgStateHome, home) {
   return base + "/omarchy/notifications.json"
 }
 
+// Some senders (Ghostty among them) leave app_name empty but set a
+// reverse-DNS desktop id as the icon; derive the display name from it.
+// Generic themed icons ("utilities-terminal") carry no dot after the
+// extension strip and yield nothing.
+function notificationAppFallback(appIcon) {
+  var icon = String(appIcon == null ? "" : appIcon)
+  icon = icon.slice(icon.lastIndexOf("/") + 1).replace(/\.(png|svg|xpm|ico)$/i, "")
+  if (icon.indexOf(".") < 0) return ""
+  return appLabel(icon)
+}
+
 // The v2 file carries pending (unseen) and past rows; merge both, newest
 // first, validated field by field.
 function parseNotifications(text, cap) {
@@ -102,8 +113,10 @@ function parseNotifications(text, cap) {
       if (!row || typeof row !== "object") continue
       var timestamp = Number(row.timestamp)
       if (!isFinite(timestamp) || timestamp <= 0) continue
+      var app = typeof row.app === "string" ? row.app : ""
+      if (app === "") app = notificationAppFallback(row.appIcon)
       rows.push({
-        app: typeof row.app === "string" ? row.app : "",
+        app: app,
         summary: typeof row.summary === "string" ? row.summary : "",
         body: typeof row.body === "string" ? row.body.replace(/\s+/g, " ").trim() : "",
         urgency: Number(row.urgency) || 0,
@@ -318,6 +331,7 @@ if (typeof module !== "undefined") {
     appLabel: appLabel,
     screenTimeLine: screenTimeLine,
     notificationsPath: notificationsPath,
+    notificationAppFallback: notificationAppFallback,
     parseNotifications: parseNotifications,
     pendingCount: pendingCount,
     relativeTime: relativeTime,

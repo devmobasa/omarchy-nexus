@@ -8,6 +8,12 @@ Item {
 
     required property var nexus
 
+    // Equal share of the strip left of the cog. Tabs at natural width fit
+    // comfortably at stock scale; at large font scales they compress
+    // instead of running under the cog or off the card edge.
+    readonly property int tabCount: NexusModel.tabPages().length
+    readonly property real tabSlot: Math.max(Style.space(8), Math.floor((width - settingsButton.width - tabCount * Style.spacing.controlGap) / tabCount))
+
     width: parent.width
     height: tabRow.implicitHeight
 
@@ -49,6 +55,7 @@ Item {
 
                 // Icon-only tabs stay uniform at any page count; the
                 // title lives in the tooltip.
+                width: Math.min(implicitWidth, tabs.tabSlot)
                 iconText: NexusModel.pageIcon(modelData)
                 tooltipText: NexusModel.pageTitle(modelData)
                 active: nexus.page === modelData
@@ -60,6 +67,8 @@ Item {
     }
 
     Button {
+        id: settingsButton
+
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         iconText: "󰒓"

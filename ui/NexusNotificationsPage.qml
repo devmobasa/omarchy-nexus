@@ -114,6 +114,7 @@ Column {
 
     // ---- notification history -----------------------------------------------
     Item {
+        visible: nexus.notificationRows.length > 0
         width: parent.width
         height: alertsTitle.implicitHeight
 
@@ -122,7 +123,7 @@ Column {
 
             anchors.left: parent.left
             width: parent.width - alertsButtons.width - Style.space(8)
-            text: nexus.notificationRows.length + " recent notifications"
+            text: nexus.notificationRows.length + (nexus.notificationRows.length === 1 ? " notification" : " notifications")
             color: Color.menu.text
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -146,7 +147,8 @@ Column {
 
             Button {
                 visible: nexus.notificationRows.length > 0 && nexus.dndService !== null
-                text: "Clear history"
+                text: "Clear"
+                tooltipText: "Clear notification history"
                 fontSize: Style.font.caption
                 onClicked: nexus.clearNotificationHistory()
             }
